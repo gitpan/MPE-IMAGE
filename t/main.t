@@ -57,6 +57,7 @@ $test_write = ($test_write =~ /^y/i);
 my $update_only = '';
 my $write_target = '';
 my $find_target  = '';
+my $find_item    = '';
 my $keyed_target = '';
 my @sets;
 my @set_info;
@@ -250,7 +251,7 @@ DB_QUERY: {
     my $num = int(rand(@find_candidates));
     $find_target = dset_name($db,$find_candidates[$num]);
     $keyed_target = dset_name($db,$paths[$num][0]{'set'});
-    my $find_item = item_name($db,$paths[$num][0]{'search'});
+    $find_item = item_name($db,$paths[$num][0]{'search'});
     print STDERR "I've chosen to use $find_target and $keyed_target (which\n";
     print STDERR "are linked by $find_item) ";
     print STDERR "in testing DBFIND, and I'll use\n";
@@ -358,7 +359,7 @@ if ($keyed_target) {
   ok($rec3{$key_item} eq $rec2{$key_item});
 
   if ($find_target) {
-    DbFind($db,$find_target,$rec3{$key_item});
+    DbFind($db,$find_target,$find_item,$rec3{$key_item});
     DbExplain unless $DbStatus[0] == 0;
     ok($DbStatus[0] == 0);
     $tests_done{'DbFind'} = 1;

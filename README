@@ -89,8 +89,11 @@ DESCRIPTION
 
   `DbClose'
 
+      DbClose(Database);
       DbClose(Database,mode);
       DbClose(Database,mode,dataset);
+
+    If mode is omitted, it defaults to 1.
 
   `DbControl'
 
@@ -304,10 +307,10 @@ DESCRIPTION
 HELPER FUNCTIONS
     MPE::IMAGE also provides a set of helper functions
 
-    * dset_info(Database,Dataset)
+    * dset_info(Database,Dataset Num)
     * dset_name(Database,Dataset)
     * dset_num(Database,Dataset)
-    * item_info(Database,Item)
+    * item_info(Database,Item Num)
     * item_name(Database,Item)
     * item_num(Database,Item)
     These functions return information about datasets or items either by
@@ -315,10 +318,10 @@ HELPER FUNCTIONS
     considerably faster that making a DbInfo call. `dset_info' returns all
     of the mode 205 information except number of entries, capacity and
     high-water mark--those things which cannot be safely cached. `item_info'
-    returns the mode 102 information. All of the calls can take either a
-    dataset/item name or number. That way, one can use, for example,
-    `item_num' passing it whatever item identification one currently has and
-    receive back an item number.
+    returns the mode 102 information. The *_name and *_num calls can take
+    either a dataset/item name or number. That way, one can use, for
+    example, `item_num' passing it whatever item identification one
+    currently has and receive back an item number.
 
 SCHEMAS
     Yet to be written

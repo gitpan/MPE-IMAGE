@@ -44,7 +44,7 @@ our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
 
 our @EXPORT = qw();
 
-our $VERSION = '0.03';
+our $VERSION = '0.04';
 bootstrap MPE::IMAGE $VERSION;
 
 use Config;
@@ -82,7 +82,7 @@ sub FETCH {
 
 sub STORE {}
 
-sub DbClose ($$;$) {
+sub DbClose ($;$$) {
   my($db,$mode,$dataset) = @_;
   
   if (defined($dataset)) {
@@ -97,6 +97,7 @@ sub DbClose ($$;$) {
   } else {
     $dataset = ';';
   }
+  $mode = 1 unless defined($mode);
   _dbclose($db,$dataset,$mode);
 }
 
@@ -177,6 +178,7 @@ sub item_info ($$) {
   $item = abs($item);
   unless (defined($db->{item_info}->[$item])) {
     my %info = DbInfo($db,102,$item);
+    return undef unless $DbStatus[0] == 0;
     $db->{item_info}->[$item] = \%info;
   }
   return $db->{item_info}->[$item];
@@ -294,7 +296,7 @@ sub unpack_subitem {
 
 sub DbFind ($$$;$$) {
   my($db,$dataset,$mode,$item,$argument) = @_;
-  my $dset_num;
+  my($dset_num,$item_num);
 
   if ($dataset =~ /^-?\d+$/) {
     $dataset = $dset_num = abs($dataset);
@@ -316,13 +318,14 @@ sub DbFind ($$$;$$) {
   }
 
   if ($item =~ /^-?\d+$/) {
-    $item = abs($item);
+    $item_num = $item = abs($item);
   } else {
     $item = uc($item);
     $item .= ';' unless $item =~ /[ ;]$/;
+    $item_num = abs(item_num($db,$item));
   }
 
-  my $info = item_info($db,$item);
+  my $info = item_info($db,$item_num);
   $argument = pack_item($argument, [ @{$info}{'count', 'type', 'length'} ]);
   _dbfind($db,$dataset,$mode,$item,$argument);
 }
@@ -510,7 +513,7 @@ sub DbOpen ($$$) {
 sub DESTROY {
   if (eval { my $handle = $_[0]->{handle}; } and
       not exists $_[0]->{closed}) {
-    DbClose($_[0],1);
+    DbClose($_[0]);
   }
 }
 
@@ -627,8 +630,11 @@ Its only intended purpose is for passing to DbEnd.
 
 =head2 C<DbClose>
 
+  DbClose(Database);
   DbClose(Database,mode);
   DbClose(Database,mode,dataset);
+
+If mode is omitted, it defaults to 1.
 
 =head2 C<DbControl>
 
@@ -844,7 +850,7 @@ MPE::IMAGE also provides a set of helper functions
 =over 4
 
 =item *
-dset_info(Database,Dataset)
+dset_info(Database,Dataset Num)
 
 =item *
 dset_name(Database,Dataset)
@@ -853,7 +859,7 @@ dset_name(Database,Dataset)
 dset_num(Database,Dataset)
 
 =item *
-item_info(Database,Item)
+item_info(Database,Item Num)
 
 =item *
 item_name(Database,Item)
@@ -868,9 +874,9 @@ the necessary DbInfo calls or from cache, so they can be considerably faster
 that making a DbInfo call.  C<dset_info> returns all of the mode 205
 information except number of entries, capacity and high-water mark--those
 things which cannot be safely cached.  C<item_info> returns the mode 102 
-information.  All of the calls can take either a dataset/item name or number.
-That way, one can use, for example, C<item_num> passing it whatever item
-identification one currently has and receive back an item number.
+information.  The *_name and *_num calls can take either a dataset/item name or
+number.  That way, one can use, for example, C<item_num> passing it whatever 
+item identification one currently has and receive back an item number.
 
 =head1 SCHEMAS
 

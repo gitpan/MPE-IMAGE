@@ -1,5 +1,11 @@
 Revision history for Perl extension MPE::IMAGE.
 
+0.04  09 Jul 2001
+        - DbClose now assumes mode 1 if the mode is not specified
+        - Some documentation fixes
+        - Catch DbInfo failure in item_info
+        - DbFind was erroneously passing item names to item_info
+
 0.03  05 Apr 2001
         - Tested and documented DbBegin, DbEnd, DbMemo, and DbX*
         - Added the remaining DbInfo modes
