@@ -1,0 +1,6 @@
+Changes
+IMAGE.pm
+IMAGE.xs
+MANIFEST
+Makefile.PL
+t/main.t

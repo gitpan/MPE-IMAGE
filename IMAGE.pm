@@ -1,0 +1,731 @@
+package MPE::IMAGE;
+
+require 5.005_62;
+use strict;
+use warnings;
+
+require Exporter;
+require DynaLoader;
+
+our @ISA = qw(Exporter DynaLoader);
+
+# Items to export into callers namespace by default. Note: do not export
+# names by default without a very good reason. Use EXPORT_OK instead.
+# Do not simply export all your public functions/methods/constants.
+
+# This allows declaration	use MPE::IMAGE ':all';
+# If you do not need this, moving things directly into @EXPORT or @EXPORT_OK
+# will save memory.
+our %EXPORT_TAGS = ( 'all' => [ qw(
+   dset_info
+   dset_name
+   dset_num
+   item_info
+   item_name
+   item_num
+  $DbError 
+  @DbStatus
+   DbBegin
+   DbClose 
+   DbEnd
+   DbExplain
+   DbFind
+   DbGet
+   DbInfo
+   DbMemo
+   DbOpen 
+   DbXBegin
+   DbXEnd
+   DbXUndo
+) ] );
+
+our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
+
+our @EXPORT = qw();
+
+our $VERSION = '0.02';
+bootstrap MPE::IMAGE $VERSION;
+
+use Config;
+
+my %size_factor = (
+  'E' => 2,
+  'I' => 2,
+  'J' => 2,
+  'K' => 2,
+  'R' => 2,
+  'P' => 0.5,
+  'U' => 1,
+  'X' => 1,
+  'Z' => 1
+);
+
+our @DbStatus;
+our $DbError;
+
+tie $DbError, 'MPE::IMAGE';
+
+sub TIESCALAR {
+  my $class = shift;
+  my $var = 0;
+  return bless \$var, $class;
+}
+
+sub FETCH { 
+  my $self = shift;
+  setDbError($self) unless
+    defined(@DbStatus) and defined($DbStatus[0]) and
+    $$self == $DbStatus[0];
+  return $$self;
+}
+
+sub STORE {}
+
+sub DbClose ($$;$) {
+  my($db,$mode,$dataset) = @_;
+  
+  if (defined($dataset)) {
+    if ($mode !~ /^\d+$/) {
+      ($mode,$dataset) = ($dataset,$mode);
+    }
+    if ($dataset =~ /^-?\d+$/) {
+      $dataset = abs($dataset);
+    } else {
+      $dataset = uc($dataset).';'; # Just in case
+    }
+  } else {
+    $dataset = ';';
+  }
+  _dbclose($db,$dataset,$mode);
+}
+
+sub dset_num ($$) {
+  my($db,$dset) = @_;
+
+  return $dset if $dset =~ /^-?\d+$/;
+  ($dset = uc($dset)) =~ s/[ ;]$//;
+  if (exists($db->{dset_nums}->{$dset})) {
+    return $db->{dset_nums}->{$dset};
+  } else {
+    my $num = DbInfo($db,201,$dset);
+    $db->{dset_names}->[abs($num)] = $dset;
+    return $db->{dset_nums}->{$dset} = $num;
+  }
+}
+
+sub dset_name ($$) {
+  my($db,$dset) = @_;
+
+  return $dset unless $dset =~ /^-?\d+$/;
+  my $abs_dset = abs($dset);
+  if (exists($db->{dset_names}->[$abs_dset])) {
+    return $db->{dset_names}->[$abs_dset];
+  } else {
+    my $name = DbInfo($db,202,$dset);
+    $db->{dset_nums}->{$name} = $dset;
+    return $db->{dset_names}->[$abs_dset] = $name;
+  }
+}
+
+sub item_num ($$) {
+  my($db,$item) = @_;
+
+  return $item if $item =~ /^-?\d+$/;
+  ($item = uc($item)) =~ s/[ ;]$//;
+  if (exists($db->{item_nums}->{$item})) {
+    return $db->{item_nums}->{$item};
+  } else {
+    my $num = DbInfo($db,101,$item);
+    $db->{item_names}->[abs($num)] = $item;
+    return $db->{item_nums}->{$item} = $num;
+  }
+}
+
+sub item_name ($$) {
+  my($db,$item) = @_;
+  
+  return $item unless $item =~ /^-?\d+$/;
+  my $abs_item = abs($item);
+  if (defined($db->{item_names}->[$abs_item])) {
+    return $db->{item_names}->[$abs_item];
+  } else {
+    my $name = DbInfo($db,102,$item);
+    $db->{item_nums}->{$name} = $item;
+    return $db->{item_names}->[$abs_item] = $name;
+  }
+}
+
+sub dset_info ($$) {
+  my($db,$dset) = @_;
+
+  $dset = abs($dset);
+  unless (defined($db->{dset_info}->[$dset])) {
+    my %info = DbInfo($db,205,$dset);
+    # Remove volatile entries 
+    delete $info{entries};
+    delete $info{capacity};
+    delete $info{hwm};
+    $db->{dset_info}->[$dset] = \%info;
+  }
+  return $db->{dset_info}->[$dset];
+}
+
+sub item_info ($$) {
+  my($db,$item) = @_;
+
+  $item = abs($item);
+  unless (defined($db->{item_info}->[$item])) {
+    my %info = DbInfo($db,102,$item);
+    $db->{item_info}->[$item] = \%info;
+  }
+  return $db->{item_info}->[$item];
+}
+
+sub mult {
+  # Multiply an arbitrarily long integer by a 32-bit or smaller integer,
+  # returning the (arbitrarily long) product
+  my($num,$factor,$add) = @_;
+  return undef if ($factor > 238609294);  # That's just under (2**31)/9
+  my $carry = (defined($add)) ? $add : 0;
+
+  foreach my $idx (reverse(0..length($num)-1)) {
+    my $product = ($factor * substr($num,$idx,1)) + $carry;
+    substr($num,$idx,1) = chop($product);
+    $carry = $product || 0;
+  }
+  $num = $carry.$num if $carry;
+  return $num;
+}
+
+sub pack_item {
+  my($item,$pic_array) = @_;
+  my $value = 0;
+
+  my($count,$type,$len) = @{$pic_array};
+
+  if ($count eq '' or $count == 1) {
+    return pack_subitem($item,$type,$len);
+  } else {
+    my $ret_val = '';
+    for (1..$count) {
+      $ret_val .= pack_subitem($item->[$_],$type,$len);
+    }
+    return $ret_val;
+  }
+}
+
+sub pack_subitem {
+  my ($item,$type,$length) = @_;
+
+  if ($type eq 'P') {
+    if ($item =~ /^\+(\d+)/) { # Marked positive
+      $item = "$1c";
+    } elsif ($item >= 0) { # No sign, nonnegative
+      $item .= 'f';
+    } else { # Negative
+      $item .= 'd';
+    }
+    $item = ('0' x ($length - length($item))).$item;
+    return pack("H$length",$item);
+  } elsif ($type =~ /[UXZ]/) {
+    return pack("A$length",$item);
+  } elsif ($type =~ /[IJK]/) {
+    if ($length >= 1 and $length <= 4) {
+      my $value = pack('L L', int($item / 2**32), $item % 2**32);
+      return substr($value,-$length*2);
+    } 
+    die "MPE::IMAGE does not cannot pack I, J or K items above 8 bytes long";
+  } else {  # E and R
+    my $ret_val = pack(($length == 2) ? 'f' : 'd',$item);
+    if ($type eq 'R') {
+      $ret_val = _IEEE_real_to_HP_real($ret_val);
+    }
+    return $ret_val;
+  }
+}
+
+sub unpack_item {
+  my($item,$pic_array) = @_;
+  my $value = 0;
+
+  my($count,$type,$len) = @{$pic_array};
+
+  if ($count == 1) {
+    return unpack_subitem($item,$type,$len);
+  } else {
+    my @ret_array;
+    for (1..$count) {
+      push @ret_array,
+        unpack_subitem(substr($item,0,$size_factor{$type}*$len,''),$type,$len);
+    }
+    return \@ret_array;
+  }
+}
+  
+sub unpack_subitem {
+  my ($item,$type,$length) = @_;
+
+  if ($type eq 'P') {
+    my $cnv = unpack("H$length",$item);
+    $cnv =~ s/^(\d+)([cdf])$/(($2 eq 'd')?'-':'').$1/e;
+    return $cnv;
+  } elsif ($type =~ /[UXZ]/) {
+    return unpack("A$length",$item);
+  } elsif ($type =~ /[IJK]/) {
+    return unpack(($type eq 'K') ? 'S' : 's',$item) if $length == 1;
+    my $value = unpack(($type eq 'K') ? 'L' : 'l',$item);
+    return $value if $length == 2;
+    return $value.unpack('S',$item) if $length == 3;
+    return $value.unpack('L',$item) if $length == 4;
+
+    # Handle longer than I4.  Why?  Who knows?
+    for my $cnt (2..($length - 1)) {
+      mult($value,2**16,unpack('S',substr($item,$cnt*2,2)));
+    }
+    return $value;
+  } else {  # E and R
+    if ($type eq 'R') {
+      $item = _HP_real_to_IEEE_real($item);
+    }
+    return unpack(($length == 2) ? 'f' : 'd',$item);
+  }
+}
+
+sub DbFind ($$$;$$) {
+  my($db,$dataset,$mode,$item,$argument) = @_;
+  my $dset_num;
+
+  if ($dataset =~ /^-?\d+$/) {
+    $dataset = $dset_num = abs($dataset);
+  } else {
+    $dataset = uc($dataset);
+    $dataset .= ';' unless $dataset =~ /[ ;]$/;
+    $dset_num = abs(dset_num($db,$dataset));
+  }
+
+  unless (defined($argument)) {
+    if (defined($item)) {
+      ($mode,$item,$argument) = (1,$mode,$item);
+    } else {
+      unless (defined($db->{key_items}->[$dset_num])) {
+        $db->{key_items}->[$dset_num] = (DbInfo($db,302,$dataset))[0];
+      }
+      ($mode,$item,$argument) = (1,$db->{key_items}->[$dset_num],$mode);
+    }
+  }
+
+  if ($item =~ /^-?\d+$/) {
+    $item = abs($item);
+  } else {
+    $item = uc($item);
+    $item .= ';' unless $item =~ /[ ;]$/;
+  }
+
+  my $info = item_info($db,$item);
+  $argument = pack_item($argument, [ @{$info}{'count', 'type', 'length'} ]);
+  _dbfind($db,$dataset,$mode,$item,$argument);
+}
+
+sub DbGet ($$$;$$$) {
+  my($db,$mode,$dataset,$list,$argument,$schema) = @_;
+  my(@list) = ();
+  my $dset_num;
+
+  if ($dataset =~ /^-?\d+$/) {
+    $dataset = $dset_num = abs($dataset);
+  } else {
+    $dataset = uc($dataset);
+    $dataset .= ';' unless $dataset =~ /[ ;]$/;
+    $dset_num = abs(dset_num($db,$dataset));
+  }
+  unless (defined($list)) {
+    if (defined($db->{default_lists}->[$dset_num])) {
+      $list = '*;';
+      @list = @{$db->{default_lists}->[$dset_num]};
+    } else {
+      $list = '@;';
+      if (defined($db->{full_lists}->[$dset_num])) {
+        @list = @{$db->{full_lists}->[$dset_num]};
+      } else {
+        @list = @{$db->{full_lists}->[$dset_num]} = DbInfo($db,104,$dataset);
+      }
+    }
+  } else {
+    if (UNIVERSAL::isa($list,'ARRAY')) {
+      @list = @{$list};
+      foreach (@list) {
+        $_ = item_num($db,$_) unless /^\d+$/;
+      }
+      $list = '';
+    } else {
+      $list = '0;' if $list =~ /^\0$/;
+      $list .= ';' unless $list =~ /[ ;]$/;
+      if ($list =~ /^\*[ ;]$/) {
+        $db->{default_lists}->[$dset_num] = []
+          unless defined($db->{default_lists}->[$dset_num]);
+        @list = @{$db->{default_lists}->[$dset_num]};
+      } elsif ($list =~ /^@[ ;]$/) {
+        @{$db->{full_lists}->[$dset_num]} = DbInfo($db,104,$dataset)
+          unless defined($db->{full_lists}->[$dset_num]);
+        @list = @{$db->{full_lists}->[$dset_num]};
+      } elsif ($list =~ /^0?[ ;]$/) {
+        @list = ();
+      } else {
+        foreach (split(/,/,$list)) {
+          my $item;
+          ($item = $_) =~ s/[ ;]$//;
+          push @list,item_num($db,$item);
+        }
+      }
+    }
+  }
+    
+  my(@name,@type,@size);
+  my $size = 0;
+  unless (defined($schema)) {
+    if ($list =~ /^\*[ ;]$/) {
+      unless (defined($db->{default_names}->[$dset_num])) {
+        $db->{default_names}->[$dset_num] = [];
+        $db->{default_types}->[$dset_num] = [];
+        $db->{default_sizes}->[$dset_num] = [];
+        $db->{default_size}->[$dset_num] = 0;
+      }
+      @name = @{$db->{default_names}->[$dset_num]};
+      @type = @{$db->{default_types}->[$dset_num]};
+      @size = @{$db->{default_sizes}->[$dset_num]};
+      $size = $db->{default_size}->[$dset_num];
+    } else {
+      $size = 0;
+      foreach (@list) {
+        my $info = item_info($db,$_);
+        my $item_size = 
+             $size_factor{$info->{type}} * $info->{length} * $info->{count};
+        push @size, $item_size;
+        $size += $item_size;
+        if (/^-?\d+$/) {
+          push @name, item_name($db,$_);
+        } else {
+          push @name, $_;
+        }
+        push @type, [ @{$info}{'count', 'type', 'length'} ];
+      }
+    }
+  } else {
+    while (@{$schema}) {
+      push @name,shift @{$schema};
+      my $pic = shift @{$schema};
+      die "Invalid datatype in DbGet: $pic"
+        unless $pic =~ /^(\d*)([A-Za-z])(\d+)$/;
+      my $count = (length($1)) ? $1 : '1';
+      my $type = uc($2);
+      push @type,[ $count, $type, $3 ];
+      my $item_size = $size_factor{$type}*$3*$count;
+      push @size,$item_size;
+      $size += $item_size;
+    }
+  }
+  
+  $argument = '' unless defined $argument;
+  if ($mode == 7 or $mode == 8) {
+    unless (defined($db->{key_items}->[$dset_num])) {
+      $db->{key_items}->[$dset_num] = (DbInfo($db,302,$dataset))[0];
+    }
+    my $info = item_info($db,$db->{key_items}->[$dset_num]);
+    $argument = pack_item($argument, [ @{$info}{'count', 'type', 'length'} ]);
+  } elsif ($mode == 4) {
+    $argument = pack('N',$argument);
+  }
+  $list = \@list unless $list =~ /^[0*@][ ;]$/;
+
+  $db->{default_lists}->[$dset_num] = $list;
+  $db->{default_names}->[$dset_num] = \@name;
+  $db->{default_types}->[$dset_num] = \@type;
+  $db->{default_sizes}->[$dset_num] = \@size;
+  $db->{default_size}->[$dset_num] = $size;
+
+  my $gotten = _dbget($db,$dataset,$mode,$list,$argument,$size);
+
+  return $gotten unless wantarray;
+
+  my %return_hash;
+  foreach (0..$#name) {
+    my $unpack_val = substr($gotten,0,$size[$_],'');
+    $return_hash{$name[$_]} = unpack_item($unpack_val,$type[$_]);
+  }
+  
+  return %return_hash;
+}
+
+sub DbInfo ($$;$) {
+  my($db,$mode,$qualifier) = @_;
+
+  if (defined($qualifier)) {
+    if ($mode !~ /^\d+$/) {
+      ($mode,$qualifier) = ($qualifier,$mode);
+    }
+    if ($qualifier =~ /^-?\d+$/) {
+      $qualifier = abs($qualifier);
+    } else {
+      $qualifier = uc($qualifier).';'; # Just in case
+    }
+  } else {
+    $qualifier = ';';
+  }
+  my $ret_data = _dbinfo($db->{handle},$qualifier,$mode);
+  return $ret_data unless ref($ret_data);
+  if (UNIVERSAL::isa($ret_data,"ARRAY")) {
+    return @{$ret_data};
+  } else {
+    return %{$ret_data} if wantarray;
+    return $ret_data->{name};
+  }
+}
+
+sub DbOpen ($$$) {
+  my($base,$pass,$mode) = @_;
+  # make sure we start with blanks
+  unless ($base =~ /^  \S/) {
+    $base =~ s/^\s+//;
+    $base = "  $base";
+  }
+  # and end with a blank or a semicolon
+  $base .= ';' unless $base =~ /[; ]$/;
+  # make sure that the password and user are either at least eight characters
+  # or else blank/semicolon-terminated
+  $pass =~ s!((?:^|/)          # beginning of line or a slash
+              [^\r/; ]*        # 0 or more valid password/user chars
+              [ ;]?)           # possibly followed by a blank or semicolon
+             (?=/|$)           # followed either by a slash or end of line
+            !my($ret) = $1;
+             $ret .= ';' unless length($1) > 7 or $1 =~ /[ ;]$/;
+             $ret;
+            !exg;              # e - execute replacemnt portion
+                               # x - allow comments and suchlike
+                               # g - do it multiple times if necessary
+  my $db = _dbopen($base,$pass,$mode);
+  return bless $db, "MPE::IMAGE";
+}
+
+sub DESTROY {
+  if (eval { my $handle = $_[0]->{handle}; } and
+      not exists $_[0]->{closed}) {
+    DbClose($_[0],1);
+  }
+}
+
+1;
+__END__
+
+=head1 NAME
+
+MPE::IMAGE - Access MPEs TurboIMAGE/XL databases from within Perl
+
+=head1 SYNOPSIS
+
+  use MPE::IMAGE;
+
+  my $db = DbOpen('Dbase.Group.Account','Password',5);
+  die "DbOpen Error: $DbError" unless $DbStatus[0] == 0;
+
+  my %record = DbGet($db,2,'dataset','items');
+  DbExplain unless $DbStatus[0] == 0;
+
+  $db->DbClose(1);
+  DbExplain unless $DbStatus[0] == 0;
+
+=head1 DESCRIPTION
+
+MPE::IMAGE is designed to make access to TurboIMAGE/XL databases fairly 
+comfortable to the Perl programmer.  Please note that the calls differ in 
+certain ways from the native intrinsic calls.  In specific:
+
+=over 4
+
+=item * 
+Anywhere a "number of elements" was given, it is no longer necessary.
+Perl knows how many elements are in an array and passes that information to
+the appropriate intrinsic.  An example of this is in passing an item-number
+list to C<DbGet>.
+
+=item *
+The status array is a globally defined perl array and so does not get passed
+to any of the routines.
+
+=item *
+The data returned from C<DbGet> and passed to C<DbPut> and C<DbUpdate> can
+be either a single scalar value containing the entire buffer exactly as it
+is gotten or put, or a hash mapping item names to their values.
+
+=item *
+MPE::IMAGE will handle all the translation to and from the various IMAGE
+datatypes transparently.
+
+=item *
+C<DbGet>, C<DbPut> and C<DbUpdate> can each take a schema hash, allowing 
+fields to be redefined.
+
+=item *
+Dataset and item names can be given in any case.  They will be passed to the
+intrinsics uppercase.
+
+=back
+
+The following are provided by MPE::IMAGE.  Note that for each call which
+expects a database argument, that argument should be a database object as
+returned by C<DbOpen>.
+
+=head2 C<@DbStatus>
+
+The array C<@DbStatus> contains the status values from the most recent
+intrinsic call.  
+
+=head2 C<$DbError>
+
+C<DBERROR> is implemented as a readonly variable called C<$DbError>.  
+When used in a string context, C<$DbError> gives the text returned by a call 
+to C<DBERROR>.
+
+When used in a numeric context, it contains the same value as C<$DbStatus[0]>.
+However, it is somewhat more expensive to use than C<$DbStatus[0]> as using it 
+includes the overhead of using a tied variable and, possibly, a call to 
+C<DBERROR>.
+
+In any of the following usages, the overhead should be negligible
+
+  die "DbOpen Error: $DbError" unless $DbStatus[0] == 0;
+  die "DbOpen Error: $DbError" if $DbError;
+  dbfail($DbError) if $DbError != 0 and $DbError != 15;
+
+I would be much less likely to use it in this fashion:
+
+  while ($DbError == 0) {
+    %data = DbGet($db,5,'dataset');
+    . . . 
+  }
+
+because it makes a "method" call on every iteration and in the final pass, 
+when the status comes up 15, it performs a C<DBERROR> call to get an 
+explanation for an expected condition, both problems which are avoided by
+using $DbStatus[0] instead:
+
+  while ($DbStatus[0] == 0) {
+    %data = DbGet($db,5,'dataset');
+    . . . 
+  }
+
+=head2 C<DbClose>
+
+  DbClose(Database,mode);
+  DbClose(Database,mode,dataset);
+
+=head2 C<DbExplain>
+
+  DbExplain;
+
+=head2 C<DbFind>
+
+  DbFind(Database,dataset,argument);  # Assumed find mode 1 on key item
+  DbFind(Database,dataset,item,argument);  # Assumed mode 1
+  DbFind(Database,dataset,mode,item,argument);
+
+=head2 C<DbGet>
+
+  DbGet(Database,mode,dataset);
+  DbGet(Database,mode,dataset,list);
+  DbGet(Database,mode,dataset,undef,argument);
+  DbGet(Database,mode,dataset,list,argument);
+  DbGet(Database,mode,dataset,undef,undef,schema);
+  DbGet(Database,mode,dataset,list,undef,schema);
+  DbGet(Database,mode,dataset,undef,argument,schema);
+  DbGet(Database,mode,dataset,list,argument,schema);
+
+C<list> can be either an array of or a comma-separated list of item names or 
+numbers (or a mixture of both).  It can also be "0", "*" or "@" and can be 
+semicolon/space-terminated or not as preferred.  If C<list> is omitted, it is
+assumed to be "*;" if the dataset has previously be used and "@;" if not.
+
+C<schema> is the description of the fields and must describe a space of
+exactly the same size as the fields in C<list>.  There will be a helper
+function to allow a schema to be checked prior to use and this is highly
+recommended.  If the schema is omitted, a schema derived from the IMAGE
+item descriptions is used instead.  See the section on schemata for more 
+information.
+
+When used in scalar context, DbGet returns the retrieved values as a single
+block.  Otherwise it returns a hash where the keys are the item names (or
+the fields described in the schema) and the values are the values of those
+items/fields.
+
+=head2 DbInfo
+
+  DbInfo(Database,mode);
+  DbInfo(Database,mode,qualifier);
+
+=head2 DbOpen
+
+  $db = DbOpen(BaseName,Password,Mode);
+
+DbOpen returns a database object which can be passed to the other calls.
+
+=head1 HELPER FUNCTIONS
+
+MPE::IMAGE also provides a set of helper functions
+
+=over 4
+
+=item *
+dset_info(Database,Dataset)
+
+=item *
+dset_name(Database,Dataset)
+
+=item *
+dset_num(Database,Dataset)
+
+=item *
+item_info(Database,Item)
+
+=item *
+item_name(Database,Item)
+
+=item *
+item_num(Database,Item)
+
+=back
+
+These functions return information about datasets or items either by making
+the necessary DbInfo calls or from cache, so they can be considerably faster
+that making a DbInfo call.  C<dset_info> returns all of the mode 205
+information except number of entries, capacity and high-water mark--those
+things which cannot be safely cached.  C<item_info> returns the mode 102 
+information.  All of the calls can take either a dataset/item name or number.
+That way, one can use, for example, C<item_num> passing it whatever item
+identification one currently has and receive back an item number.
+
+=head1 SCHEMAS
+
+Yet to be written
+
+=head1 NOTES
+
+=over 4
+
+=item *
+MPE::IMAGE can handle packed-decimal fields of any length, but as a P28, for
+example, can hold a larger number than a 64-bit integer, P fields are always
+translated into strings.  If the number is within range, Perl will translate
+it into binary format when necessary.
+
+=item *
+IMAGE allows the definition of I, J and K types greater than 64 bits.  
+MPE::IMAGE, however, gets very confused by such things.  
+
+=head1 AUTHOR
+
+Ted Ashton, ashted@southern.edu
+
+=head1 SEE ALSO
+
+perl(1).
+
+=cut
