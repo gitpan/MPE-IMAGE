@@ -1,5 +1,8 @@
 Revision history for Perl extension MPE::IMAGE.
 
+0.98a 26 Sep 2002
+        - New maintainer
+
 0.98  21 Dec 2001
         - Bug fix in DbLock
         - Allow dataset to be given before mode in DbGet

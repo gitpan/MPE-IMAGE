@@ -388,8 +388,10 @@ NOTES
     range, Perl will translate it into binary format when necessary.
     * IMAGE allows the definition of I, J and K types greater than 64 bits.
     MPE::IMAGE, however, gets very confused by such things.
-AUTHOR
-    Ted Ashton, ashted@southern.edu
+AUTHORS
+    Ted Ashton, ashted@southern.edu (author).
+
+    Dave Oksner, dave@case.net (maintainer).
 
 SEE ALSO
     perl(1).

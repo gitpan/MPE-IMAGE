@@ -50,7 +50,7 @@ our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
 
 our @EXPORT = qw();
 
-our $VERSION = '0.98';
+our $VERSION = '0.98a';
 bootstrap MPE::IMAGE $VERSION;
 
 use Config;
@@ -1222,9 +1222,11 @@ MPE::IMAGE, however, gets very confused by such things.
 
 =back
 
-=head1 AUTHOR
+=head1 AUTHORS
 
-Ted Ashton, ashted@southern.edu
+Ted Ashton, ashted@southern.edu (original author).
+
+Dave Oksner, dave@case.net (maintainer).
 
 =head1 SEE ALSO
 
