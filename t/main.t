@@ -3,7 +3,7 @@
 use Test;
 use strict;
 
-BEGIN { plan tests => 15 }
+BEGIN { plan tests => 29 }
 
 use MPE::IMAGE ':all';
 
@@ -48,7 +48,7 @@ my $test_write = '';
 print STDERR "\n\nIf you answer yes to the following, I will create a single\n";
 print STDERR "record in a dataset of the test database, update and then\n";
 print STDERR "delete that record.\n\n";
-while ($test_write !~ /^y/i and $test_write !~ /^n/ and $test_write ne '//') {
+while ($test_write !~ /^y/i and $test_write !~ /^n/i and $test_write ne '//') {
   print STDERR "Do you wish to test DbPut, DbUpdate and DbDelete? ";
   chomp($test_write = <>);
 }
@@ -60,16 +60,17 @@ my $find_target  = '';
 my $keyed_target = '';
 my @sets;
 my @set_info;
+my $open_mode = ($test_write) ? 1 : 5;
+my $database;
+my $pass = '';
 
 DB_QUERY: {
-  my $database;
   print STDERR "\nTo test the IMAGE::MPE module, I need the name of an\n";
   print STDERR "existing IMAGE database: ";
   chomp($database = <>);
   exit if $database eq '//';
 
   PASS_QUERY: {
-    my $pass = '';
     print STDERR "\nPlease provide me with a password which will give me\n";
     print STDERR ($test_write) ? "WRITE" : "read-only";
     print STDERR " access to $database: ";
@@ -78,7 +79,7 @@ DB_QUERY: {
     print STDERR "\n";
 
     # Open the test database (prefer 1/5 so we can test DbLock)
-    $db = DbOpen($database,$pass,($test_write) ? 1 : 5);
+    $db = DbOpen($database,$pass,$open_mode);
     if ($DbStatus[0] == 0) {
       last PASS_QUERY;
     } elsif ($DbStatus[0] == -13 or $DbStatus[0] == -21) {
@@ -99,7 +100,8 @@ DB_QUERY: {
 
     # If we get here, we could not open it due to it already being open
     # mode 2, 4, 6 or 8.
-    $db = DbOpen($database,$pass,($test_write) ? 4 : 6);
+    $open_mode = ($test_write) ? 4 : 6;
+    $db = DbOpen($database,$pass,$open_mode);
     if ($DbStatus[0] == 0) {
       last PASS_QUERY;
     } else {
@@ -116,8 +118,8 @@ DB_QUERY: {
     }
 
     # We won't reach this unless $test_write is true
-    my $next_mode = ($DbStatus[0] == -1) ? 2 : 6;
-    $db = DbOpen($database,$pass,$next_mode);
+    $open_mode = ($DbStatus[0] == -1) ? 2 : 6;
+    $db = DbOpen($database,$pass,$open_mode);
     if ($DbStatus[0] != 0 and $DbStatus[0] != -32) {
       print STDERR "Problems.  I'm unable to open $database.\n";
       print STDERR "IMAGE says: $DbError\n\n";
@@ -126,8 +128,8 @@ DB_QUERY: {
     }
 
     if ($DbStatus[0] == -32) {
-      $next_mode = 6;
-      $db = DbOpen($database,$pass,$next_mode);
+      $open_mode = 6;
+      $db = DbOpen($database,$pass,$open_mode);
       if ($DbStatus[0] != 0) {
         print STDERR "Problems.  I'm unable to open $database.\n";
         print STDERR "IMAGE says: $DbError\n\n";
@@ -136,7 +138,7 @@ DB_QUERY: {
       }
     }
       
-    if ($next_mode == 6) {
+    if ($open_mode == 6) {
       print STDERR "$database is either open mode 4 or 8 or is currently\n";
       print STDERR "being DBSTOREd.  We've opened it mode 6 and will\n";
       print STDERR "only test the read functions.\n\n";
@@ -222,7 +224,7 @@ DB_QUERY: {
         dset_name($db,$writeable_sets[int(rand(@writeable_sets))]);
       print STDERR "I've chosen $write_target as the ";
       print STDERR 
-        (($update_only) ? "DBUPDATE\n" : "DBPUT/DBUPDATE/DBDELETE\n");
+        (($update_only) ? "DbUpdate " : "DbPut/DbUpdate/DbDelete\n");
       print STDERR "target dataset.\n\n";
     }
   }
@@ -346,7 +348,10 @@ if ($keyed_target) {
   ok($DbStatus[0] == 0);
   $tests_done{'DbInfo mode 302'} = 1;
   
-  %rec3 = DbGet($db,7,$keyed_target,undef,$rec2{$key_item});
+  my @mode7_items = map { abs($_) } DbInfo($db,104,$keyed_target);
+  @mode7_items = map { item_name($db,$_) } @mode7_items;
+
+  %rec3 = DbGet($db,7,$keyed_target,join(', ',@mode7_items),$rec2{$key_item});
   DbExplain unless $DbStatus[0] == 0;
   ok($DbStatus[0] == 0);
   $tests_done{'DbGet mode 7'} = 1;
@@ -379,8 +384,113 @@ if ($keyed_target) {
   skip(1,'DbGet mode 5');
 }
 
+# DbMemo test
+DbMemo($db,'MPE::IMAGE Testing DbMemo');
+DbExplain unless ($DbStatus[0] == 0);
+ok($DbStatus[0] == 0);
+$tests_done{'DbMemo'} = 1;
+
+# Note: The DbBegin/DbEnd testing will be cleaned up once there is something
+# to put between the begin and the end :-).
+
+# Test DbBegin/DbEnd here as we will use the dynamic form later
+DbBegin($db,1,'MPE::IMAGE Testing DbBegin mode 1');
+DbExplain unless ($DbStatus[0] == 0);
+ok($DbStatus[0] == 0);
+$tests_done{'DbBegin mode 1'} = 1;
+
+DbEnd($db,2,'MPE::IMAGE Testing DbEnd mode 2');
+DbExplain unless ($DbStatus[0] == 0);
+ok($DbStatus[0] == 0);
+$tests_done{'DbEnd mode 2'} = 1;
+ 
+DbXBegin($db,1,'MPE::IMAGE Testing DbXBegin mode 1');
+DbExplain unless ($DbStatus[0] == 0);
+ok($DbStatus[0] == 0);
+$tests_done{'DbXBegin mode 1'} = 1;
+
+DbXEnd($db,1,'MPE::IMAGE Testing DbXEnd mode 1');
+DbExplain unless ($DbStatus[0] == 0);
+ok($DbStatus[0] == 0);
+$tests_done{'DbXEnd mode 1'} = 1;
+ 
+DbXBegin($db,1,'MPE::IMAGE Testing DbXBegin mode 1');
+DbExplain unless ($DbStatus[0] == 0);
+
+DbXUndo($db,1,'MPE::IMAGE Testing DbXUndo mode 1');
+DbExplain unless ($DbStatus[0] == 0);
+ok($DbStatus[0] == 0);
+$tests_done{'DbXUndo mode 1'} = 1;
+
+# Attempt to open the database again to test multiple-db form
+my($db2,$multi_db);
+if ($open_mode != 4) {
+  $db2 = DbOpen($database,$pass,$open_mode);
+  $multi_db = ($DbStatus[0] == 0);
+} else {
+  $multi_db = 0;
+}
+
+if ($multi_db) {
+  DbBegin([$db,$db2],3,'MPE::IMAGE Testing DbBegin mode 3');
+  DbExplain unless ($DbStatus[0] == 0);
+  ok($DbStatus[0] == 0);
+  $tests_done{'DbBegin mode 3'} = 1;
+
+  DbEnd([$db,$db2],3,'MPE::IMAGE Testing DbEnd mode 3');
+  DbExplain unless ($DbStatus[0] == 0);
+  ok($DbStatus[0] == 0);
+  $tests_done{'DbEnd mode 3'} = 1;
+
+  my $transid = DbBegin([$db,$db2],4,'MPE::IMAGE Testing DbBegin mode 4');
+  DbExplain unless ($DbStatus[0] == 0);
+  ok($DbStatus[0] == 0);
+  $tests_done{'DbBegin mode 4'} = 1;
+
+  DbEnd($transid,4,'MPE::IMAGE Testing DbEnd mode 4');
+  DbExplain unless ($DbStatus[0] == 0);
+  ok($DbStatus[0] == 0);
+  $tests_done{'DbEnd mode 4'} = 1;
+
+  DbControl($db,7);
+  DbExplain unless ($DbStatus[0] == 0);
+  ok($DbStatus[0] == 0);
+  $tests_done{'DbControl mode 7'} = 1;
+
+  DbControl($db2,7);
+  DbExplain unless ($DbStatus[0] == 0);
+
+  $transid = DbXBegin([$db,$db2],3,'MPE::IMAGE Testing DbXBegin mode 3');
+  DbExplain unless ($DbStatus[0] == 0);
+  ok($DbStatus[0] == 0);
+  $tests_done{'DbXBegin mode 3'} = 1;
+
+  DbXEnd($transid,3,'MPE::IMAGE Testing DbXEnd mode 3');
+  DbExplain unless ($DbStatus[0] == 0);
+  ok($DbStatus[0] == 0);
+  $tests_done{'DbXEnd mode 3'} = 1;
+
+  $transid = DbXBegin([$db,$db2],3,'MPE::IMAGE Testing DbXBegin mode 3');
+  DbExplain unless ($DbStatus[0] == 0);
+
+  DbXUndo($transid,3,'MPE::IMAGE Testing DbXUndo mode 3');
+  DbExplain unless ($DbStatus[0] == 0);
+  ok($DbStatus[0] == 0);
+  $tests_done{'DbXUndo mode 3'} = 1;
+} else {
+  skip(1,'DbBegin mode 3');
+  skip(1,'DbEnd mode 3');
+  skip(1,'DbBegin mode 4');
+  skip(1,'DbEnd mode 4');
+  skip(1,'DbControl mode 7');
+  skip(1,'DbXBegin mode 3');
+  skip(1,'DbXUndo mode 3');
+}
+
 # Close the base
 DbClose($db,1);
+DbExplain unless ($DbStatus[0] == 0);
 ok($DbStatus[0] == 0);
+$tests_done{'DbClose'} = 1;
 
 print STDERR "\n\nTests performed:\n",join("\n",sort keys %tests_done),"\n\n";

@@ -1,0 +1,5 @@
+1) The following calls need to be handled:
+     DbLock, DbPut, DbUpdate, DbDelete, DbUnlock
+
+2) It would be nice if README were automatically built just prior to creating
+   the distribution.

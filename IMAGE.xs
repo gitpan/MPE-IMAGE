@@ -24,6 +24,43 @@
     }
   } /* setstatus */
 
+  SV *DbControl(SV *basehandle, short mode, SV *func, SV *set, short flags) {
+    SV   **handle;
+    short  status[10];
+    short  qualifier[16];
+
+    handle = hv_fetch((HV *)SvRV(basehandle),"handle",6,FALSE);
+    if (handle == NULL) {
+      croak("DbControl called without valid handle.");
+    } 
+    if ( mode < 1  || mode > 16 || mode == 11 || mode == 12 ) {
+      warn("DbControl can only handle modes 1-10 and 13-16");
+      warn("Ignoring DbControl call with mode %d",mode);
+      return(&PL_sv_undef);
+    }
+    if (mode == 13) {
+      qualifier[0] = SvIV(func);
+      if (qualifier[0] != 0) {
+        qualifier[1] = SvIV(set);
+        qualifier[4] = flags;
+      }
+    } else if (mode == 14) {
+      qualifier[0] = SvIV(func);
+      qualifier[1] = SvPV_nolen(set)[0];
+    } else if (mode == 15) {
+      if (SvOK(func)) {
+        qualifier[0] = SvPV_nolen(set)[0] << 8;
+      }
+    }
+    dbcontrol(SvPV_nolen(*handle),&qualifier,&mode,status);
+    setstatus(status);
+    if (mode == 13 || mode == 14) {
+      return(newSViv(make_int(qualifier,2)));
+    } else {
+      return(&PL_sv_undef);
+    }
+  }
+    
   void setDbError(SV *ErrPtr) {
     int    cnt;
     short  dbstatus[10];
@@ -188,20 +225,23 @@
     short   status[10];
     short   qual_short;
     short  *buffer;
+    int    *intbuf;
     AV     *new_array;
     HV     *new_hash;
     char   *char_ptr;
     SV     *temp_sv;
-    SV     *return_sv;;
+    SV     *return_sv;
     
     if ( mode < 101  || (mode > 104 &&
-         mode < 201) || (mode > 206 &&
+         mode < 113) || (mode > 113 &&
+         mode < 201) || (mode > 209 &&
          mode < 301) || (mode > 302 &&
+         mode < 401) || (mode > 404 &&
          mode < 406) || (mode > 406 &&
-         mode < 501) || (mode > 501 &&
+         mode < 501) || (mode > 502 &&
          mode < 901) ||  mode > 901 ) {
       warn("DbInfo can only handle the following modes:\n");
-      warn("  101-104, 201-206, 301-302, 406, 501, 901\n");
+      warn("  101-104, 113, 201-209, 301-302, 401-404, 406, 501-502, 901\n");
       warn("Ignoring DbInfo call with mode %d",mode);
       return(&PL_sv_undef);
     }
@@ -211,6 +251,7 @@
         240 datasets per database
        1200 items per database
         255 items per dataset
+         99 chunks per jumbo dataset
          64 paths per master dataset
          16 paths per detail dataset
      */
@@ -220,14 +261,20 @@
         mode == 501 || 
         mode == 901) {
       buffer = calloc(1,2);
-    } else if (mode == 302) {
+    } else if (mode == 302 || mode == 502) {
       buffer = calloc(2,2);
-    } else if (mode == 102 || 
+    } else if (mode == 401 || mode == 402) {
+      buffer = calloc(16,2);
+    } else if (mode == 102 || mode == 113 ||
                mode == 202 || mode == 205 ||
+               mode == 403 || mode == 404 ||
                mode == 406) {
       buffer = calloc(32,2);
-    } else if (mode == 301) {
-      buffer = calloc(193,2);
+    } else if (mode == 208 || mode == 209) {
+      /* put it into intbuf for access and buffer to be freed */
+      (int *)buffer = intbuf = calloc(32,4);
+    } else if (mode == 207 || mode == 301) {
+      buffer = calloc(200,2);
     } else if (mode == 103 || mode == 104 || 
                mode == 203 || mode == 204) {
       buffer = calloc(1201,2);
@@ -249,7 +296,14 @@
         mode == 501 || 
         mode == 901) {
       return_sv = newSViv(*buffer);
-    } else if (mode == 302) {
+    } else if (mode == 209) {
+      new_array = newAV();
+
+      av_push(new_array,newSViv(intbuf[0]));
+      av_push(new_array,newSViv(intbuf[1]));
+      
+      return_sv = newRV_noinc((SV *)new_array);
+    } else if (mode == 302 || mode == 502) {
       new_array = newAV();
 
       av_push(new_array,newSViv(buffer[0]));
@@ -288,6 +342,70 @@
       } 
 
       return_sv = newRV_noinc((SV *)new_hash);
+    } else if (mode == 401 || mode == 403) {
+      new_hash = newHV();
+
+      char_ptr = (char *)buffer + 8;
+      while (char_ptr >= (char *)buffer && *(--char_ptr) == ' ') {}
+      temp_sv = newSVpvn((char *)buffer,char_ptr - (char *)buffer + 1);
+      hv_store(new_hash,"logid",5,temp_sv,0);
+
+      hv_store(new_hash,"base log flag",13,newSViv(buffer[4]),0);
+      hv_store(new_hash,"user log flag",13,newSViv(buffer[5]),0);
+      hv_store(new_hash,"trans flag",10,newSViv(buffer[6]),0);
+      hv_store(new_hash,"user trans num",14,newSViv(make_int(buffer,7)),0);
+   
+      if (mode == 403) {
+        hv_store(new_hash,"log set size",12,newSViv(make_int(buffer,9)),0);
+        hv_store(new_hash,"log set type",12,newSVpvn((char *)&buffer[11],2),0);
+        hv_store(new_hash,"base attached",13,newSViv(buffer[12]),0);
+        hv_store(new_hash,"dynamic trans",13,newSViv(buffer[13]),0);
+
+        char_ptr = (char *)buffer + 52;
+        while (char_ptr >= (char *)buffer && *(--char_ptr) == ' ') {}
+        temp_sv = newSVpvn((char *)buffer,char_ptr - (char *)buffer + 1);
+        hv_store(new_hash,"log set name",12,temp_sv,0);
+
+      }
+
+      return_sv = newRV_noinc((SV *)new_hash);
+    } else if (mode == 402) {
+      new_hash = newHV();
+
+      hv_store(new_hash,"ILR log flag",12,newSViv(buffer[0]),0);
+      hv_store(new_hash,"ILR date",8,newSViv(buffer[1]),0);
+      hv_store(new_hash,"ILR time",8,newSViv(make_int(buffer,2)),0);
+
+      return_sv = newRV_noinc((SV *)new_hash);
+    } else if (mode == 404) {
+      new_hash = newHV();
+
+      hv_store(new_hash,"base log flag",13,newSViv(buffer[0]),0);
+      hv_store(new_hash,"user log flag",13,newSViv(buffer[1]),0);
+      hv_store(new_hash,"rollback flag",13,newSViv(buffer[2]),0);
+      hv_store(new_hash,"ILR log flag",12,newSViv(buffer[3]),0);
+      hv_store(new_hash,"mustrecover",11,newSViv(buffer[4]),0);
+      hv_store(new_hash,"base remote",11,newSViv(buffer[5]),0);
+      hv_store(new_hash,"trans flag",10,newSViv(buffer[6]),0);
+
+      char_ptr = (char *)buffer + 22;
+      while (char_ptr >= (char *)buffer && *(--char_ptr) == ' ') {}
+      temp_sv = newSVpvn((char *)buffer,char_ptr - (char *)buffer + 1);
+      hv_store(new_hash,"logid",5,temp_sv,0);
+
+      hv_store(new_hash,"log index",9,newSViv(make_int(buffer,11)),0);
+      hv_store(new_hash,"trans id",8,newSViv(make_int(buffer,13)),0);
+      hv_store(new_hash,"trans bases",11,newSViv(buffer[15]),0);
+   
+      new_array = newAV();
+
+      for (cnt = 1; cnt <= buffer[15]; cnt++) {
+        av_push(new_array,newSViv(buffer[cnt+15]));
+      }
+
+      hv_store(new_hash,"base ids",8,newRV_noinc((SV *)new_array),0);
+
+      return_sv = newRV_noinc((SV *)new_hash);
     } else if (mode == 406) {
       new_hash = newHV();
 
@@ -312,12 +430,43 @@
       }
 
       return_sv = newRV_noinc((SV *)new_array);
+    } else if (mode == 207) {
+      new_array = newAV();
+
+      for (cnt = 1; cnt <= buffer[0]; cnt++) {
+        av_push(new_array,newSViv(make_int(buffer,cnt*2+1)));
+      }
+      return_sv = newRV_noinc((SV *)new_array);
     } else if (mode == 103 || mode == 104 || 
                mode == 203 || mode == 204) {
       new_array = newAV();
 
       for (cnt = 1; cnt <= buffer[0]; cnt++) {
         av_push(new_array,newSViv(buffer[cnt]));
+      }
+      return_sv = newRV_noinc((SV *)new_array);
+    } else if (mode == 113) {
+      new_array = newAV();
+
+      for (cnt = 0; cnt < 6; cnt++) {
+        if (cnt == 1 || cnt == 5) {
+          char_ptr = (char *)buffer + (2*cnt + 1);
+          av_push(new_array,newSVpvn(char_ptr,1));
+        } else {
+          av_push(new_array,newSViv((unsigned short)buffer[cnt]));
+        }
+      }
+      
+      return_sv = newRV_noinc((SV *)new_array);
+    } else if (mode == 208) {
+      new_array = newAV();
+
+      for (cnt = 0; cnt < 7; cnt++) {
+        if (cnt == 3 || cnt == 7) {
+          av_push(new_array,newSViv(intbuf[cnt]));
+        } else {
+          av_push(new_array,newSViv((unsigned int)intbuf[cnt]));
+        }
       }
       return_sv = newRV_noinc((SV *)new_array);
     }
@@ -352,26 +501,30 @@
     return newRV_noinc((SV*) base_opened);
   } /* _dbopen */
 
-  #define DBBEGIN  1
-  #define DBEND    2
-  #define DBMEMO   3
-  #define DBXBEGIN 4
-  #define DBXEND   5
-  #define DBXUNDO  6
+  #define DBBEGIN  0
+  #define DBEND    1
+  #define DBMEMO   2
+  #define DBXBEGIN 3
+  #define DBXEND   4
+  #define DBXUNDO  5
 
-  SV *_doBUE(SV *base_s, short mode, char *text, int call) {
+  SV *_doBEUM(SV *base_s, short mode, char *text, int call) {
     short   status[10];
     int     cnt;
     short  *db_array = NULL;
     SV    **entry;
     SV    **handle;
+    SV     *ret_sv;
     short   textlen;
+    char    callnames[49] = "DbBegin DbEnd   DbMemo  DbXBeginDbXEnd  DbXUndo ";
+    char    callname[9] = "        ";
 
     textlen = -strlen(text);
+    strncpy(callname,&callnames[call * 8],8);
     if (sv_isobject(base_s) && sv_derived_from(base_s, "MPE::IMAGE")) {
-      handle = hv_fetch((HV *)SvRV(*entry),"handle",6,FALSE);
+      handle = hv_fetch((HV *)SvRV(base_s),"handle",6,FALSE);
       if (handle == NULL) {
-        croak("DbXBegin called with invalid database handle");
+        croak("invalid database handle in call to %s",callname);
       }
       switch (call) {
         case DBBEGIN: 
@@ -393,19 +546,21 @@
           dbxundo(SvPV_nolen(*handle),text,&mode,status,&textlen); 
           break;
       }
-      return(newSVpvn(SvPV_nolen(*handle),SvCUR(*handle)));
+      setstatus(status);
+      return(&PL_sv_undef);
     } else if (sv_derived_from(base_s, "ARRAY")) {
       db_array = calloc(av_len((AV *)SvRV(base_s))+4,2);
       db_array[0] = db_array[1] = 0;
       db_array[2] = av_len((AV *)SvRV(base_s))+1;
-      for (cnt = 0; cnt < db_array[2]-1; cnt++) {
+      for (cnt = 0; cnt < db_array[2]; cnt++) {
         entry = av_fetch((AV *)SvRV(base_s),cnt,FALSE);
         if (entry == NULL) {
-          croak("Unable to av_fetch array entry %d in DbXBegin",cnt);
+          croak("Unable to av_fetch array entry %d in %s",cnt,callname);
         }
         handle = hv_fetch((HV *)SvRV(*entry),"handle",6,FALSE);
         if (handle == NULL) {
-          croak("Array element %d was not a database pointer in DbXBegin",cnt);
+          croak("Array element %d was not a database pointer in %s",
+                cnt,callname);
         }
         db_array[3+cnt] = *(short *)SvPV_nolen(*handle);
       }
@@ -417,7 +572,7 @@
           dbend(db_array,text,&mode,status,&textlen);
           break;
         case DBMEMO:
-          dbmemo(db_array,text,&mode,status,&textlen);
+          croak("DBMemo called with a a baseid list");
           break;
         case DBXBEGIN:
           dbxbegin(db_array,text,&mode,status,&textlen);
@@ -429,25 +584,14 @@
           dbxundo(db_array,text,&mode,status,&textlen);
           break;
       }
-      return(newSVpvn((char *)db_array,(av_len((AV *)SvRV(base_s))+4)*2));
+      setstatus(status);
+      ret_sv = newSVpvn((char *)&db_array,(av_len((AV *)SvRV(base_s))+4)*2);
+      free(db_array);
+      return(ret_sv);
     } else { 
-      if (call == DBBEGIN || call == DBXBEGIN) {
-        /* so that the programmer can call DbBegin or DbXBegin */
-        /* with an array once and thereafter use the value it returned */
-        strncpy(SvPV_nolen(base_s),"\0\0\0\0",4);
-      }
       switch (call) {
-        case DBBEGIN:
-          dbbegin(SvPV_nolen(base_s),text,&mode,status,&textlen);
-          break;
         case DBEND:
           dbend(SvPV_nolen(base_s),text,&mode,status,&textlen);
-          break;
-        case DBMEMO:
-          dbmemo(SvPV_nolen(base_s),text,&mode,status,&textlen);
-          break;
-        case DBXBEGIN:
-          dbxbegin(SvPV_nolen(base_s),text,&mode,status,&textlen);
           break;
         case DBXEND:
           dbxend(SvPV_nolen(base_s),text,&mode,status,&textlen);
@@ -455,11 +599,13 @@
         case DBXUNDO:
           dbxundo(SvPV_nolen(base_s),text,&mode,status,&textlen);
           break;
+        default:
+          croak("%s called with without database reference.",callname);
       }
-      return(base_s);
+      setstatus(status);
+      return(&PL_sv_undef);
     }
-    setstatus(status);
-  } /* _doBUE */
+  } /* _doBEUM */
 
   /* These two work with the reals in packed form */
   SV *_IEEE_real_to_HP_real(SV *source) {
@@ -496,6 +642,14 @@
 MODULE = MPE::IMAGE	PACKAGE = MPE::IMAGE	
 
 PROTOTYPES: DISABLE
+
+SV *
+DbControl(basehandle, mode, func = &PL_sv_undef, set = &PL_sv_undef, flags = 0)
+        SV *     basehandle
+        short    mode
+        SV *     func
+        SV *     set
+        short    flags
 
 void
 setDbError (ErrPtr)
@@ -539,13 +693,13 @@ _dbopen (basename, password, mode)
 	char *	password
 	short	mode
 
-void
+SV *
 DbBegin (base_s, mode, text = "")
 	SV *    base_s
 	short   mode
         char *  text
   CODE:
-    _doBUE(base_s, mode, text, DBBEGIN);
+    RETVAL = _doBEUM(base_s, mode, text, DBBEGIN);
 
 void
 DbEnd (base_s, mode, text = "")
@@ -553,23 +707,23 @@ DbEnd (base_s, mode, text = "")
 	short   mode
         char *  text
   CODE:
-    _doBUE(base_s, mode, text, DBEND);
+    _doBEUM(base_s, mode, text, DBEND);
 
 void
-DbMemo (base_s, mode, text = "")
+DbMemo (base_s, text = "", mode = 1)
         SV *    base_s
         short   mode
         char *  text
   CODE:
-    _doBUE(base_s, mode, text, DBMEMO);
+    _doBEUM(base_s, mode, text, DBMEMO);
 
-void
+SV *
 DbXBegin (base_s, mode, text = "")
 	SV *    base_s
 	short   mode
         char *  text
   CODE:
-    _doBUE(base_s, mode, text, DBXBEGIN);
+    RETVAL = _doBEUM(base_s, mode, text, DBXBEGIN);
 
 void
 DbXEnd (base_s, mode, text = "")
@@ -577,7 +731,7 @@ DbXEnd (base_s, mode, text = "")
 	short   mode
         char *  text
   CODE:
-    _doBUE(base_s, mode, text, DBXEND);
+    _doBEUM(base_s, mode, text, DBXEND);
 
 void
 DbXUndo (base_s, mode, text = "")
@@ -585,7 +739,7 @@ DbXUndo (base_s, mode, text = "")
 	short   mode
         char *  text
   CODE:
-    _doBUE(base_s, mode, text, DBXUNDO);
+    _doBEUM(base_s, mode, text, DBXUNDO);
 
 SV *
 _IEEE_real_to_HP_real (source)

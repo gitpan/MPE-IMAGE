@@ -27,6 +27,7 @@ our %EXPORT_TAGS = ( 'all' => [ qw(
   @DbStatus
    DbBegin
    DbClose 
+   DbControl
    DbEnd
    DbExplain
    DbFind
@@ -43,7 +44,7 @@ our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
 
 our @EXPORT = qw();
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 bootstrap MPE::IMAGE $VERSION;
 
 use Config;
@@ -371,7 +372,7 @@ sub DbGet ($$$;$$$) {
       } elsif ($list =~ /^0?[ ;]$/) {
         @list = ();
       } else {
-        foreach (split(/,/,$list)) {
+        foreach (split(/,\s*/,$list)) {
           my $item;
           ($item = $_) =~ s/[ ;]$//;
           push @list,item_num($db,$item);
@@ -522,7 +523,7 @@ MPE::IMAGE - Access MPEs TurboIMAGE/XL databases from within Perl
 
 =head1 SYNOPSIS
 
-  use MPE::IMAGE;
+  use MPE::IMAGE ':all';
 
   my $db = DbOpen('Dbase.Group.Account','Password',5);
   die "DbOpen Error: $DbError" unless $DbStatus[0] == 0;
@@ -613,10 +614,42 @@ using $DbStatus[0] instead:
     . . . 
   }
 
+=head2 C<DbBegin>
+
+  DbBegin(Database,1);
+  DbBegin(Database,1,text);
+  $transid = DbBegin(Array of bases,3 or 4);
+  $transid = DbBegin(Array of bases,3 or 4,text);
+
+Note that the $transid is more than just a number.  It is the array, in binary
+form, containing not only the transaction id but all the base ids as well.
+Its only intended purpose is for passing to DbEnd.
+
 =head2 C<DbClose>
 
   DbClose(Database,mode);
   DbClose(Database,mode,dataset);
+
+=head2 C<DbControl>
+
+  DbControl(Database,mode);
+  $status = DbControl(Database,13,0);
+  $status = DbControl(Database,13,function,set);
+  $status = DbControl(Database,13,function,set,flags);
+  $status = DbControl(Database,14,function);
+  $status = DbControl(Database,14,7,wildcard);
+  DbControl(Database,15);
+  DbControl(Database,15,wildcard);
+  DbControl(Database,16);
+
+=head2 C<DbEnd>
+
+  DbEnd(Database,1 or 2);
+  DbEnd(Database,1 or 2,text);
+  DbEnd(Array of bases,3 or 4);
+  DbEnd(Array of bases,3 or 4,text);
+  DbEnd($transid,3 or 4);
+  DbEnd($transid,3 or 4,text);
 
 =head2 C<DbExplain>
 
@@ -656,16 +689,153 @@ block.  Otherwise it returns a hash where the keys are the item names (or
 the fields described in the schema) and the values are the values of those
 items/fields.
 
-=head2 DbInfo
+=head2 C<DbInfo>
 
-  DbInfo(Database,mode);
-  DbInfo(Database,mode,qualifier);
+Since the return values from DbInfo must be parsed, and since the necessary
+buffer size varies widely depending on the mode, only the modes listed in
+the August 1997 (sixth) edition of the Image manual are supported 
+(third-party indexing modes are not currently supported).
 
-=head2 DbOpen
+  $item_num = DbInfo(Database,101,item name or number);
+
+  %item_info = DbInfo(Database,102,item name or number);
+
+C<%item_info> will have elements with the following keys: "name", "type",
+"length", "count".
+
+  @item_nums = DbInfo(Database,103);
+
+C<@item_nums> will contain the item numbers (positive and negative).  As with 
+other modes which return arrays, the first element is *not* the number of
+items.  Rather, the number of items is reflected in the size of the array.
+
+  @item_nums = DbInfo(Database,104,set name or number);
+
+  @btree_info = DbInfo(Database,113);
+
+C<@btree_info> will be a six-element array, the 2nd and 6th elements of which
+contain the respective wild-card characters (see Image documentation).
+
+  $set_num = DbInfo(Database,201,set name or number);
+
+  %set_info = DbInfo(Database,202,set name or number);
+
+C<%set_info> will have elements with the following keys: "name", "type",
+"length", "block fact", "entries", "capacity".
+
+  @set_nums = DbInfo(Database,203);
+
+  @set_nums = DbInfo(Database,204,item name or number);
+
+  %set_info = DbInfo(Database,205,set name or number);
+
+C<%set_info> will have elements with the following keys: "name", "type",
+"length", "block fact", "entries", "capacity", "hwm", "max cap", "init cap",
+"increment", "inc percent", "dynamic cap".
+
+  $num_chunks = DbInfo(Database,206,set name or number);
+
+  @chunk_sizes = DbInfo(Database,207,set name or number);
+
+  @set_info = DbInfo(Database,208,set name or number);
+
+C<@set_info> will be a seven-element array.
+
+  @btree_info = DbInfo(Database,209,set name or number);
+
+C<@btree_info> will be a two-element array.
+
+  @path_array = DbInfo(Database,301,set name or number);
+
+C<@path_array> will be an n-element array, where n is the number of paths for
+the specified dataset.  Each element will be a reference to a hash containing
+elements with the following keys: "set", "search", and "sort".  To report 
+which sets are connected by paths to MYDETAIL, you could do something like 
+this:
+  
+  my @path_array = DbInfo($db,301,'MYDETAIL');
+  foreach (@path_array) {
+    print $_->{'set'},"\n";
+  }
+  # end of example
+
+  @key_array = DbInfo(Database,302,set name or number);
+
+C<@key_array> will be a two-element array.
+
+  %log_info = DbInfo(Database,401);
+
+C<%log_info> will have elements with the following keys: "logid",
+"base log flag", "user log flag", "trans flag", "user trans num".
+
+  %ILR_info = DbInfo(Database,402);
+
+C<%ILR_info> will have elements with the following keys: "ILR log flag",
+"ILR date", "ILR time".
+
+  %log_info = DbInfo(Database,403);
+
+C<%log_info> will have elements with the following keys: "logid",
+"base log flag", "user log flag", "trans flag", "user trans num",
+"log set size", "log set type", "base attached", "dynamic trans",
+"log set name".
+
+  %log_info = DbInfo(Database,404);
+
+C<%log_info> will have elements with the following keys: "base log flag",
+"user log flag", "rollback flag", "ILR log flag", "mustrecover",
+"base remote", "trans flag", "logid", "log index", "trans id", "trans bases",
+"base ids".  "base ids" will be a reference to an array containing the ids
+of the bases being used in a multiple-base transaction.
+
+  %db_info = DbInfo(Database,406);
+
+C<%db_info> will have elements with the following keys: "name", "mode",
+"version"
+
+  $subsys_access = DbInfo(Database,501);
+
+  @ci_update = DbInfo(Database,502);
+
+C<@ci_update> will be a two-element array.
+
+  $language_id = DbInfo(Database,901);
+
+=head2 C<DbMemo>
+
+  DbMemo(Database);
+  DbMemo(Database,text);
+
+=head2 C<DbOpen>
 
   $db = DbOpen(BaseName,Password,Mode);
 
 DbOpen returns a database object which can be passed to the other calls.
+
+=head2 C<DbXBegin>
+
+  DbXBegin(Database,1);
+  DbXBegin(Database,1,text);
+  $transid = DbXBegin(Array of bases,3);
+  $transid = DbXBegin(Array of bases,3,text);
+
+Note that the $transid is more than just a number.  It is the array, in binary
+form, containing not only the transaction id but all the base ids as well.
+Its only intended purpose is for passing to DbXEnd or DbXUndo.
+
+=head2 C<DbXEnd>
+
+  DbXEnd(Database,1 or 2);
+  DbXEnd(Database,1 or 2,text);
+  DbXEnd($transid,3);
+  DbXEnd($transid,3,text);
+
+=head2 C<DbXUndo>
+
+  DbXUndo(Database,1);
+  DbXUndo(Database,1,text);
+  DbXUndo($transid,3);
+  DbXUndo($transid,3,text);
 
 =head1 HELPER FUNCTIONS
 
@@ -709,6 +879,11 @@ Yet to be written
 =head1 NOTES
 
 =over 4
+
+=item *
+ONLY those calls/modes which are in the test suite are guaranteed to be
+tested.  There are some things, such as Priv Mode DbControl calls and things
+relating to B-Trees and Jumbo sets which I couldn't very well test.
 
 =item *
 MPE::IMAGE can handle packed-decimal fields of any length, but as a P28, for

@@ -4,11 +4,13 @@ use ExtUtils::MakeMaker;
 WriteMakefile(
     'NAME'		=> 'MPE::IMAGE',
     'VERSION_FROM'	=> 'IMAGE.pm', # finds $VERSION
+    'AUTHOR'            => 'Ted Ashton <ashted@southern.edu>',
+    'ABSTRACT'          => "Access to MPE's TurboIMAGE intrinsics",
 );
 
 sub MY::postamble {
   '
-lint: IMAGE.c
-	lclint +gnuextensions +posixlib $(CCDFLAGS) -I$(PERL_INC) $(DEFINE) IMAGE.c
+README: IMAGE.pm
+	/PERL/PUB/pod2text IMAGE.pm > README
   ';
 }
