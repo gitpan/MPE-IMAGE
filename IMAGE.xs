@@ -111,6 +111,7 @@
     SV     **entry;
     STRLEN   len;
     char    *dset_buf;
+    short    dset_num;
 
     entry = hv_fetch((HV *)SvRV(basehandle),"handle",6,FALSE);
     if (entry == NULL) {
@@ -120,8 +121,8 @@
         croak("*entry is NULL");
       }
       if (SvIOK(dataset) || looks_like_number(dataset)) {
-        dset_buf = malloc(4);
-        *(int *)dset_buf = SvIV(dataset);
+        (short *)dset_buf = &dset_num;
+        dset_num = SvIV(dataset);
       } else {
         dset_buf = SvPV_nolen(dataset);
       }
@@ -133,28 +134,53 @@
     }
   } /* _dbclose */
 
+  void _dbdelete(SV *basehandle, SV *dset) {
+    short   status[10];
+    short   mode = 1;
+    char   *dset_buf;
+    short   dset_num;
+    SV    **entry;
+
+    entry = hv_fetch((HV *)SvRV(basehandle),"handle",6,FALSE);
+    if (entry == NULL) {
+      croak("DbDelete called without valid handle.");
+    } 
+    if (SvIOK(dset) || looks_like_number(dset)) {
+      (short *)dset_buf = &dset_num;
+      dset_num = SvIV(dset);
+    } else {
+      dset_buf = SvPV_nolen(dset);
+    }
+
+    dbdelete(SvPV_nolen(*entry),dset_buf,&mode,status);
+    setstatus(status);
+
+  } /* _dbdelete */
+
   void _dbfind(SV *basehandle, SV *dataset, short mode, SV *item,
                SV *argument) {
     short   status[10];
     SV    **entry;
     char   *dset_buf;
+    short   dset_num;
     char   *item_buf;
+    short   item_num;
 
     entry = hv_fetch((HV *)SvRV(basehandle),"handle",6,FALSE);
     if (entry == NULL) {
-      croak("DbGet called without valid handle.");
+      croak("DbFind called without valid handle.");
     } 
 
     if (SvIOK(dataset) || looks_like_number(dataset)) {
-      dset_buf = malloc(2);
-      *(short *)dset_buf = SvIV(dataset);
+      (short *)dset_buf = &dset_num;
+      dset_num = SvIV(dataset);
     } else {
       dset_buf = SvPV_nolen(dataset);
     }
 
     if (SvIOK(item) || looks_like_number(item)) {
-      item_buf = malloc(2);
-      *(short *)item_buf = SvIV(item);
+      (short *)item_buf = &item_num;
+      item_num = SvIV(item);
     } else {
       item_buf = SvPV_nolen(item);
     }
@@ -173,6 +199,7 @@
     short  *list_buffer;
     AV     *list_array;
     char   *dset_buf;
+    short   dset_num;
     SV     *ret_sv;
 
     entry = hv_fetch((HV *)SvRV(basehandle),"handle",6,FALSE);
@@ -198,8 +225,8 @@
       (char *)list_buffer = SvPV_nolen(list);
     }
     if (SvIOK(dataset) || looks_like_number(dataset)) {
-      dset_buf = malloc(2);
-      *(short *)dset_buf = SvIV(dataset);
+      (short *)dset_buf = &dset_num;
+      dset_num = SvIV(dataset);
     } else {
       dset_buf = SvPV_nolen(dataset);
     }
@@ -474,6 +501,19 @@
     return(return_sv);
   } /* _dbinfo */
 
+  void _dblock(SV *basehandle, short mode, SV *descr) {
+    short   status[10];
+    SV    **entry;
+
+    entry = hv_fetch((HV *)SvRV(basehandle),"handle",6,FALSE);
+    if (entry == NULL) {
+      croak("DbLock called without valid handle.");
+    } 
+
+    dblock(SvPV_nolen(*entry),SvPV_nolen(descr),&mode,status);
+    setstatus(status);
+  } /* _dblock */
+
   SV *_dbopen(char *basename, char *password, short mode) {
     short status[10];
     SV *base_name;
@@ -500,6 +540,96 @@
     }
     return newRV_noinc((SV*) base_opened);
   } /* _dbopen */
+
+  void _dbput(SV *basehandle, SV *dset, SV *list, SV *buffer) {
+    short   status[10];
+    short   mode = 1;
+    SV    **entry;
+    short  *list_buffer;
+    AV     *list_array;
+    int     cnt;
+    char   *dset_buf;
+    short   dset_num;
+    
+    entry = hv_fetch((HV *)SvRV(basehandle),"handle",6,FALSE);
+    if (entry == NULL) {
+      croak("DbPut called without valid handle.");
+    }
+    if (SvROK(list)) { /* Got a list of item numbers */
+      list_array = (AV *)SvRV(list);
+      list_buffer = calloc(av_len(list_array)+2,2);
+      list_buffer[0] = av_len(list_array)+1;
+      for (cnt = 1; cnt <= list_buffer[0]; cnt++) {
+        list_buffer[cnt] = SvIV(*av_fetch(list_array,cnt-1,FALSE));
+      }
+    } else {
+      (char *)list_buffer = SvPV_nolen(list);
+    }
+
+    if (SvIOK(dset) || looks_like_number(dset)) {
+      (short *)dset_buf = &dset_num;
+      dset_num = SvIV(dset);
+    } else {
+      dset_buf = SvPV_nolen(dset);
+    }
+
+    dbput(SvPV_nolen(*entry),dset_buf,&mode,status,list_buffer,
+          SvPV_nolen(buffer));
+    setstatus(status);
+
+  } /* _dbput */
+
+  void _dbupdate(SV *basehandle, SV *dset, SV *list, SV *buffer) {
+    short   status[10];
+    short   mode = 1;
+    SV    **entry;
+    short  *list_buffer;
+    AV     *list_array;
+    int     cnt;
+    char   *dset_buf;
+    short   dset_num;
+    
+    entry = hv_fetch((HV *)SvRV(basehandle),"handle",6,FALSE);
+    if (entry == NULL) {
+      croak("DbUpdate called without valid handle.");
+    }
+    if (SvROK(list)) { /* Got a list of item numbers */
+      list_array = (AV *)SvRV(list);
+      list_buffer = calloc(av_len(list_array)+2,2);
+      list_buffer[0] = av_len(list_array)+1;
+      for (cnt = 1; cnt <= list_buffer[0]; cnt++) {
+        list_buffer[cnt] = SvIV(*av_fetch(list_array,cnt-1,FALSE));
+      }
+    } else {
+      (char *)list_buffer = SvPV_nolen(list);
+    }
+
+    if (SvIOK(dset) || looks_like_number(dset)) {
+      (short *)dset_buf = &dset_num;
+      dset_num = SvIV(dset);
+    } else {
+      dset_buf = SvPV_nolen(dset);
+    }
+
+    dbupdate(SvPV_nolen(*entry),dset_buf,&mode,status,list_buffer,
+             SvPV_nolen(buffer));
+    setstatus(status);
+
+  } /* _dbupdate */
+
+  void _dbunlock(SV *basehandle) {
+    short   status[10];
+    short   mode = 1;
+    short   dset;
+    SV    **entry;
+
+    entry = hv_fetch((HV *)SvRV(basehandle),"handle",6,FALSE);
+    if (entry == NULL) {
+      croak("DbUnlock called without valid handle.");
+    } 
+    dbunlock(SvPV_nolen(*entry),&dset,&mode,status);
+    setstatus(status);
+  } /* _dbunlock */
 
   #define DBBEGIN  0
   #define DBEND    1
@@ -665,6 +795,11 @@ _dbclose (basehandle, dataset, mode)
 	short	mode
 
 void
+_dbdelete (basehandle, dataset)
+        SV *    basehandle
+        SV *    dataset
+
+void
 _dbfind (basehandle, dataset, mode, item, argument)
          SV *    basehandle
          SV *    dataset
@@ -687,11 +822,31 @@ _dbinfo (basehandle, qualifier, mode)
 	SV *	qualifier
 	short	mode
 
+void
+_dblock (basehandle, mode, descr)
+        SV *    basehandle
+        short   mode
+        SV *    descr
+
 SV *
 _dbopen (basename, password, mode)
 	char *	basename
 	char *	password
 	short	mode
+
+void
+_dbput (basehandle, dset, list, buffer)
+        SV *    basehandle
+        SV *    dset
+        SV *    list
+        SV *    buffer
+
+void
+_dbupdate (basehandle, dset, list, buffer)
+        SV *    basehandle
+        SV *    dset
+        SV *    list
+        SV *    buffer
 
 SV *
 DbBegin (base_s, mode, text = "")
@@ -716,6 +871,12 @@ DbMemo (base_s, text = "", mode = 1)
         char *  text
   CODE:
     _doBEUM(base_s, mode, text, DBMEMO);
+
+void
+DbUnlock (base_s)
+          SV *    base_s
+  CODE:
+    _dbunlock(base_s);
 
 SV *
 DbXBegin (base_s, mode, text = "")

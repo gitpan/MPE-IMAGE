@@ -39,13 +39,18 @@ our %EXPORT_TAGS = ( 'all' => [ qw(
    DbXBegin
    DbXEnd
    DbXUndo
+   DbLock
+   DbUnlock
+   DbPut
+   DbDelete
+   DbUpdate
 ) ] );
 
 our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
 
 our @EXPORT = qw();
 
-our $VERSION = '0.05';
+our $VERSION = '0.97';
 bootstrap MPE::IMAGE $VERSION;
 
 use Config;
@@ -308,6 +313,10 @@ sub DbFind ($$$;$$$) {
     $dset_num = abs(dset_num($db,$dataset));
   }
 
+  unless ($mode =~ /^-?\d+$/ or defined($type)) {
+    ($mode,$item,$argument,$type) = (1,$mode,$item,$argument);
+  }
+
   unless (defined($argument)) {
     if (defined($item)) {
       ($mode,$item,$argument) = (1,$mode,$item);
@@ -319,13 +328,16 @@ sub DbFind ($$$;$$$) {
     }
   }
 
-  if ($item =~ /^-?\d+$/) {
-    $item_num = $item = abs($item);
-  } else {
-    $item = uc($item);
-    $item .= ';' unless $item =~ /[ ;]$/;
-    $item_num = item_num($db,$item);
-    $item_num = abs($item_num) if defined($item_num);
+  $item = uc($item);
+  $item .= ';' unless $item =~ /[ ;]$/;
+
+  unless (defined($type)) {
+    if ($item =~ /^-?\d+$/) {
+      $item_num = $item = abs($item);
+    } else {
+      $item_num = item_num($db,$item);
+      $item_num = abs($item_num) if defined($item_num);
+    }
   }
 
   return unless defined($item_num) or defined($type);
@@ -340,24 +352,33 @@ sub DbFind ($$$;$$$) {
   _dbfind($db,$dataset,$mode,$item,$argument);
 }
 
-sub DbGet ($$$;$$$) {
-  my($db,$mode,$dataset,$list,$argument,$schema) = @_;
-  my(@list) = ();
-  my $dset_num;
+#
+# Touchup the value passed (either numeric or alpha) and return it and the
+# dataset number
+#
+sub touchup_dset ($$) {
+  my($db,$dset) = @_;
+  my $dnum; 
 
-  if ($dataset =~ /^-?\d+$/) {
-    $dataset = $dset_num = abs($dataset);
+  if ($dset =~ /^-?\d+$/) {
+    $dset = $dnum = abs($dset);
   } else {
-    $dataset = uc($dataset);
-    $dataset .= ';' unless $dataset =~ /[ ;]$/;
-    $dset_num = abs(dset_num($db,$dataset));
+    $dset = uc($dset);
+    $dset .= ';' unless $dset =~ /[ ;]$/;
+    $dnum = abs(dset_num($db,$dset));
   }
-  if ($mode == 4 or $mode == 7 or $mode == 8) {
-    if (@_ == 4) {
-      $argument = $list;
-      undef $list;
-    } 
-  }
+  return ($dset,$dnum);
+}
+
+#
+# Take the list received and return the set list in both scalar and 
+#   array forms.  If $list is undefined, return the current list if there
+#   is one and the @-list otherwise.
+#
+sub touchup_list ($$$$) {
+  my($db,$list,$dset_num,$dataset) = @_;
+  my(@list) = ();
+
   unless (defined($list)) {
     if (defined($db->{default_lists}->[$dset_num])) {
       $list = '*;';
@@ -399,7 +420,14 @@ sub DbGet ($$$;$$$) {
       }
     }
   }
-    
+  @list = map { abs($_) } @list;
+  return($list,@list);
+}
+ 
+sub collect_items {
+  my($db,$list,$list_arr,$dset_num,$schema) = @_;
+  my @list = @{$list_arr};
+
   my(@name,@type,@size);
   my $size = 0;
   unless (defined($schema)) {
@@ -434,8 +462,8 @@ sub DbGet ($$$;$$$) {
     while (@{$schema}) {
       push @name,shift @{$schema};
       my $pic = shift @{$schema};
-      croak "Invalid datatype in DbGet: $pic"
-        unless $pic =~ /^(\d*)([A-Za-z])(\d+)$/;
+      croak "Invalid datatype in schema: $pic"
+        unless $pic =~ /^(\d*)([eijkrpuxz])(\d+)$/i;
       my $count = (length($1)) ? $1 : '1';
       my $type = uc($2);
       push @type,[ $count, $type, $3 ];
@@ -444,6 +472,35 @@ sub DbGet ($$$;$$$) {
       $size += $item_size;
     }
   }
+  return(\@name,\@type,\@size,$size);
+}
+
+sub DbDelete ($$) {
+  my($db,$dset) = @_;
+  my $dset_num;
+
+  ($dset,$dset_num) = touchup_dset($db,$dset);
+  _dbdelete($db,$dset);
+}
+
+sub DbGet ($$$;$$$) {
+  my($db,$mode,$dataset,$list,$argument,$schema) = @_;
+  my(@list) = ();
+  my $dset_num;
+
+  ($dataset, $dset_num) = touchup_dset($db,$dataset);
+
+  if ($mode == 4 or $mode == 7 or $mode == 8) {
+    if (@_ == 4) {
+      $argument = $list;
+      undef $list;
+    } 
+  }
+
+  ($list,@list) = touchup_list($db,$list,$dset_num,$dataset);
+    
+  my($name_arr,$type_arr,$size_arr,$size) = 
+    collect_items($db,$list,\@list,$dset_num,$schema);
   
   $argument = '' unless defined $argument;
   if ($mode == 7 or $mode == 8) {
@@ -458,9 +515,9 @@ sub DbGet ($$$;$$$) {
   $list = \@list unless $list =~ /^[0*@][ ;]$/;
 
   $db->{default_lists}->[$dset_num] = \@list;
-  $db->{default_names}->[$dset_num] = \@name;
-  $db->{default_types}->[$dset_num] = \@type;
-  $db->{default_sizes}->[$dset_num] = \@size;
+  $db->{default_names}->[$dset_num] = $name_arr;
+  $db->{default_types}->[$dset_num] = $type_arr;
+  $db->{default_sizes}->[$dset_num] = $size_arr;
   $db->{default_size}->[$dset_num] = $size;
 
   my $gotten = _dbget($db,$dataset,$mode,$list,$argument,$size);
@@ -468,9 +525,9 @@ sub DbGet ($$$;$$$) {
   return $gotten unless wantarray;
 
   my %return_hash;
-  foreach (0..$#name) {
-    my $unpack_val = substr($gotten,0,$size[$_],'');
-    $return_hash{$name[$_]} = unpack_item($unpack_val,$type[$_]);
+  foreach (0..$#{$name_arr}) {
+    my $unpack_val = substr($gotten,0,${$size_arr}[$_],'');
+    $return_hash{${$name_arr}[$_]} = unpack_item($unpack_val,${$type_arr}[$_]);
   }
   
   return %return_hash;
@@ -501,6 +558,46 @@ sub DbInfo ($$;$) {
   }
 }
 
+sub DbLock ($$;@) {
+  my($db,$mode,@descr) = @_;
+  
+  if ($mode == 1 or $mode == 2) {
+    _dblock($db,$mode,0);
+  } elsif ($mode == 3 or $mode == 4) {
+    _dblock($db,$mode,dset_name($db,$descr[0]).';');
+  } else {
+    my($descr) = pack('S',scalar(@descr));
+    foreach my $d (@descr) {
+      croak "Descriptor passed to DbLock is neither Array nor Hash"
+        unless UNIVERSAL::isa($d,'ARRAY') or UNIVERSAL::isa($d,'HASH');
+      my(@vals);
+      if (UNIVERSAL::isa($d,'ARRAY')) {
+        @vals = @{$d};
+      } else {
+        croak "Missing 'set' in descriptor passed to DbLock"
+          unless defined(${$d}{'set'});
+        @vals = grep { defined } @{$d}{'set','cond'};
+      }
+      if (@vals == 1) {
+        $descr .= pack('S A16',10,dset_name($db,$vals[0]).';').'@ ';
+      } else {
+        my($item,$relop,$value) = split(/([<>= ]?=)/,$vals[1]);
+        $relop = '=' if $relop eq '==';
+        my $item_name;
+        croak "Unknown item '$item' in DbLock" 
+          unless $item_name = item_name($db,$item);
+        my $info = item_info($db,item_num($db,$item));
+        $value = pack_item($value, [ @{$info}{'count', 'type', 'length'} ]);
+        my $len = $info->{'count'} * $size_factor{$info->{'type'}} *  
+                  $info->{'length'};
+        $descr .= pack('S A16 A16 A2',int($len/2)+18,dset_name($db,$vals[0]),
+                                      $item_name,$relop).$value;
+      }
+    }
+    _dblock($db,$mode,$descr);
+  }
+}
+
 sub DbOpen ($$$) {
   my($base,$pass,$mode) = @_;
   # make sure we start with blanks
@@ -524,6 +621,116 @@ sub DbOpen ($$$) {
                                # g - do it multiple times if necessary
   my $db = _dbopen($base,$pass,$mode);
   return bless $db, "MPE::IMAGE";
+}
+
+sub DbPut ($$$;$) {
+  my($db,$dset,$list,$data) = @_;
+  my(@list) = ();;
+  my $dset_num;
+  my $schema = undef;
+ 
+  ($dset,$dset_num) = touchup_dset($db,$dset);
+  
+  ($data,$list) = ($list,$data) unless defined($data);
+
+  if (UNIVERSAL::isa($data,'HASH')) {
+    $list = join(',',keys %{$data});
+    ($list,@list) = touchup_list($db,$list,$dset_num,$dset);
+    my @vals = @{$data}{map { item_name($db,$_) } @list};
+
+    my($name_arr,$type_arr,$size_arr,$size) =
+      collect_items($db,$list,\@list,$dset_num,$schema);
+
+    my $packed_val = '';
+    my $total_size = 0;
+    foreach my $idx (0..$#{$name_arr}) {
+      $packed_val .= pack_item($vals[$idx],$type_arr->[$idx]);
+      $total_size += $size_arr->[$idx];
+    }
+
+    $list = \@list unless $list =~ /^[0*@][ ;]$/;
+
+    $db->{default_lists}->[$dset_num] = \@list;
+    $db->{default_names}->[$dset_num] = $name_arr;
+    $db->{default_types}->[$dset_num] = $type_arr;
+    $db->{default_sizes}->[$dset_num] = $size_arr;
+    $db->{default_size}->[$dset_num]  = $total_size;
+    
+    _dbput($db,$dset,$list,$packed_val);
+
+  } else { # $data is a scalar
+  
+    ($list,@list) = touchup_list($db,$list,$dset_num,$dset);
+
+    my($name_arr,$type_arr,$size_arr,$size) =
+      collect_items($db,$list,\@list,$dset_num,$schema);
+
+    $list = \@list unless $list =~ /^[0*@][ ;]$/;
+
+    $db->{default_lists}->[$dset_num] = \@list;
+    $db->{default_names}->[$dset_num] = $name_arr;
+    $db->{default_types}->[$dset_num] = $type_arr;
+    $db->{default_sizes}->[$dset_num] = $size_arr;
+    $db->{default_size}->[$dset_num] = $size;
+    
+    _dbput($db,$dset,$list,$data);
+
+  }
+}
+
+sub DbUpdate ($$$;$) {
+  my($db,$dset,$list,$data) = @_;
+  my(@list) = ();;
+  my $dset_num;
+  my $schema = undef;
+ 
+  ($dset,$dset_num) = touchup_dset($db,$dset);
+  
+  ($data,$list) = ($list,$data) unless defined($data);
+
+  if (UNIVERSAL::isa($data,'HASH')) {
+    $list = join(',',keys %{$data});
+    ($list,@list) = touchup_list($db,$list,$dset_num,$dset);
+    my @vals = @{$data}{map { item_name($db,$_) } @list};
+
+    my($name_arr,$type_arr,$size_arr,$size) =
+      collect_items($db,$list,\@list,$dset_num,$schema);
+
+    my $packed_val = '';
+    my $total_size = 0;
+    foreach (0..$#{$name_arr}) {
+      $packed_val .= pack_item($vals[$_],$type_arr->[$_]);
+      $size += $size_arr->[$_];
+    }
+
+    $list = \@list unless $list =~ /^[0*@][ ;]$/;
+
+    $db->{default_lists}->[$dset_num] = \@list;
+    $db->{default_names}->[$dset_num] = $name_arr;
+    $db->{default_types}->[$dset_num] = $type_arr;
+    $db->{default_sizes}->[$dset_num] = $size_arr;
+    $db->{default_size}->[$dset_num] = $size;
+    
+    _dbupdate($db,$dset,$list,$packed_val);
+
+  } else { # $data is a scalar
+  
+    ($list,@list) = touchup_list($db,$list,$dset_num,$dset);
+
+    my($name_arr,$type_arr,$size_arr,$size) =
+      collect_items($db,$list,\@list,$dset_num,$schema);
+
+    $list = \@list unless $list =~ /^[0*@][ ;]$/;
+
+    $db->{default_lists}->[$dset_num] = \@list;
+    $db->{default_names}->[$dset_num] = $name_arr;
+    $db->{default_types}->[$dset_num] = $type_arr;
+    $db->{default_sizes}->[$dset_num] = $size_arr;
+    $db->{default_size}->[$dset_num] = $size;
+    
+    _dbupdate($db,$dset,$list,$data);
+
+  }
 }
 
 sub DESTROY {
@@ -663,6 +870,10 @@ If mode is omitted, it defaults to 1.
   DbControl(Database,15);
   DbControl(Database,15,wildcard);
   DbControl(Database,16);
+
+=head2 C<DbDelete>
+
+  DbDelete(Database,Dataset);
 
 =head2 C<DbEnd>
 
@@ -833,6 +1044,20 @@ C<@ci_update> will be a two-element array.
 
   $language_id = DbInfo(Database,901);
 
+=head2 C<DbLock>
+
+  DbLock(Database,1 or 2);
+  DbLock(Database,3 or 4,Dataset);
+  DbLock(Database,5 or 6,Desc1,Desc2,...);
+
+The Descriptors are either hashes or arrays.  If they are hashes, they must
+contain a 'set' key and may optionally contain a 'cond' key.  The value for
+the 'set' key should be the dataset, either numeric or alphabetic.  The 
+condition should be given as item, relop and value value in a single string.  
+For example, 'ID=12345' would be a valid condition.  If the descriptor is
+an array, it should contain the dataset in slot 0 and the conditional, if any,
+in slot 1.
+
 =head2 C<DbMemo>
 
   DbMemo(Database);
@@ -843,6 +1068,28 @@ C<@ci_update> will be a two-element array.
   $db = DbOpen(BaseName,Password,Mode);
 
 DbOpen returns a database object which can be passed to the other calls.
+
+=head2 C<DbPut>
+
+  DbPut(Database,Dataset,Data);
+  DbPut(Database,Dataset,List,Data);
+
+Data may either be a hash or a scalar.  If it is a hash, the keys of the
+hash will be used to construct the list.  If it is a scalar and no list is
+specified, the current list will be used.
+
+=head2 C<DbUnlock>
+
+  DbUnlock(Database);
+
+=head2 C<DbUpdate>
+
+  DbUpdate(Database,Dataset,Data);
+  DbUpdate(Database,Dataset,List,Data);
+
+Data may either be a hash or a scalar.  If it is a hash, the keys of the
+hash will be used to construct the list.  If it is a scalar and no list is
+specified, the current list will be used.
 
 =head2 C<DbXBegin>
 
@@ -906,7 +1153,8 @@ item identification one currently has and receive back an item number.
 
 =head1 SCHEMAS
 
-Yet to be written
+Yet to be written.  Note that schemas do NOT yet work for DbPut or DbUpdate,
+only DbGet (and in a small way for DbFind).
 
 =head1 NOTES
 
@@ -926,6 +1174,8 @@ it into binary format when necessary.
 =item *
 IMAGE allows the definition of I, J and K types greater than 64 bits.  
 MPE::IMAGE, however, gets very confused by such things.  
+
+=back
 
 =head1 AUTHOR
 

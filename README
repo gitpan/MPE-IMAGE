@@ -107,6 +107,10 @@ DESCRIPTION
       DbControl(Database,15,wildcard);
       DbControl(Database,16);
 
+  `DbDelete'
+
+      DbDelete(Database,Dataset);
+
   `DbEnd'
 
       DbEnd(Database,1 or 2);
@@ -278,6 +282,20 @@ DESCRIPTION
 
       $language_id = DbInfo(Database,901);
 
+  `DbLock'
+
+      DbLock(Database,1 or 2);
+      DbLock(Database,3 or 4,Dataset);
+      DbLock(Database,5 or 6,Desc1,Desc2,...);
+
+    The Descriptors are either hashes or arrays. If they are hashes, they
+    must contain a 'set' key and may optionally contain a 'cond' key. The
+    value for the 'set' key should be the dataset, either numeric or
+    alphabetic. The condition should be given as item, relop and value value
+    in a single string. For example, 'ID=12345' would be a valid condition.
+    If the descriptor is an array, it should contain the dataset in slot 0
+    and the conditional, if any, in slot 1.
+
   `DbMemo'
 
       DbMemo(Database);
@@ -288,6 +306,28 @@ DESCRIPTION
       $db = DbOpen(BaseName,Password,Mode);
 
     DbOpen returns a database object which can be passed to the other calls.
+
+  `DbPut'
+
+      DbPut(Database,Dataset,Data);
+      DbPut(Database,Dataset,List,Data);
+
+    Data may either be a hash or a scalar. If it is a hash, the keys of the
+    hash will be used to construct the list. If it is a scalar and no list
+    is specified, the current list will be used.
+
+  `DbUnlock'
+
+      DbUnlock(Database);
+
+  `DbUpdate'
+
+      DbUpdate(Database,Dataset,Data);
+      DbUpdate(Database,Dataset,List,Data);
+
+    Data may either be a hash or a scalar. If it is a hash, the keys of the
+    hash will be used to construct the list. If it is a scalar and no list
+    is specified, the current list will be used.
 
   `DbXBegin'
 
@@ -334,7 +374,8 @@ HELPER FUNCTIONS
     currently has and receive back an item number.
 
 SCHEMAS
-    Yet to be written
+    Yet to be written. Note that schemas do NOT yet work for DbPut or
+    DbUpdate, only DbGet (and in a small way for DbFind).
 
 NOTES
     * ONLY those calls/modes which are in the test suite are guaranteed to
@@ -348,8 +389,8 @@ NOTES
     * IMAGE allows the definition of I, J and K types greater than 64 bits.
     MPE::IMAGE, however, gets very confused by such things.
 AUTHOR
-        Ted Ashton, ashted@southern.edu
+    Ted Ashton, ashted@southern.edu
 
 SEE ALSO
-        perl(1).
+    perl(1).
 

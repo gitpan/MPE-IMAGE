@@ -3,7 +3,7 @@
 use Test;
 use strict;
 
-BEGIN { plan tests => 33 }
+BEGIN { plan tests => 38 }
 
 use MPE::IMAGE ':all';
 
@@ -14,7 +14,6 @@ sub weed_sets {
   #   1) Automatic Masters
   #   2) Full sets
   #   3) Details with paths
-  # (empty sets are removed already)
 
   my $db = shift;
   my @set_info;
@@ -44,6 +43,7 @@ ok($DbError eq 'BAD DATABASE NAME OR PRECEDING BLANKS MISSING');
 $tests_done{'$DbError'} = 1;
 $tests_done{'@DbStatus'} = 1;
 
+print "# Three tests done so far\n";
 my $test_write = '';
 print STDERR "\n\nIf you answer yes to the following, I will create a single\n";
 print STDERR "record in a dataset of the test database, update and then\n";
@@ -60,6 +60,7 @@ my $find_target  = '';
 my $find_item    = '';
 my $keyed_target = '';
 my @sets;
+my @nonempty_sets;
 my @set_info;
 my $open_mode = ($test_write) ? 1 : 5;
 my $database;
@@ -145,9 +146,9 @@ DB_QUERY: {
       print STDERR "only test the read functions.\n\n";
       $test_write = '';
     } else {
-      print STDERR "$database is open 2, so we've opened it also mode 2,\n";
-      print STDERR "and will only test DbUpdate using the null list so\n";
-      print STDERR "that we don't disturb any current data.\n\n";
+      print STDERR "$database is already open mode 2, so we've also\n";
+      print STDERR "opened it mode 2 and will only test DbUpdate using the\n";
+      print STDERR "null list so that we don't disturb any current data.\n\n";
       $update_only = 1;
     }
   
@@ -168,7 +169,7 @@ DB_QUERY: {
 
   # Empty sets are of no use in any of our tests
   my @indicies = grep { $set_info[$_]->{entries} > 0 } (0..$#sets);
-  @sets = @sets[@indicies];
+  @nonempty_sets = @sets[@indicies];
   @set_info = @set_info[@indicies];
   
   if ($test_write) {
@@ -193,7 +194,7 @@ DB_QUERY: {
     }
 
     unless (@writeable_sets) {
-      foreach (@sets) {
+      foreach (@nonempty_sets) {
         my @items = DbInfo($db,104,$_);
         DbExplain unless $DbStatus[0] == 0;
         if (grep { $_ < 0 } @items) {
@@ -215,8 +216,8 @@ DB_QUERY: {
       }
       if ($answer =~ /^n/i) {
         DbClose($db,1);
-        print STDERR "Please enter a new password . . . \n\n";
-        goto PASS_QUERY;
+        print STDERR "Please re-enter the database (// to exit)\n";
+        redo DB_QUERY;
       } else {
         $test_write = '';
       }
@@ -228,6 +229,7 @@ DB_QUERY: {
         (($update_only) ? "DbUpdate " : "DbPut/DbUpdate/DbDelete\n");
       print STDERR "target dataset.\n\n";
     }
+    
   }
 
   my @detail_sets = map { $_->{name} } grep { $_->{type} eq 'D' } @set_info;
@@ -240,7 +242,7 @@ DB_QUERY: {
     @{$_} = grep { 
       my %path = %{$_};
       my $set = abs($path{set}); 
-      grep { abs($_) == $set } @sets 
+      grep { abs($_) == $set } @nonempty_sets 
     } @{$_};
   }
   @find_candidates = @find_candidates[
@@ -281,6 +283,7 @@ DB_QUERY: {
 
 ok(defined($db));
 $tests_done{'DbOpen'} = 1;
+print "# Done with DbOpen (should be test 4)\n";
 
 my($mode2_target);
 if ($find_target) {
@@ -289,8 +292,8 @@ if ($find_target) {
   $mode2_target = $keyed_target;
 } elsif ($write_target) {
   $mode2_target = $write_target;
-} elsif (@sets) {
-  $mode2_target = $sets[0];
+} elsif (@nonempty_sets) {
+  $mode2_target = $nonempty_sets[rand(@nonempty_sets)];
 } else {
   die "There are no available sets on which to perform any tests.";
 }
@@ -340,6 +343,7 @@ MATCHECK: foreach (keys %rec1) {
   }
 }
 ok($ok);
+print "# Nine done to this point.\n";
 
 my %rec3;
 if ($keyed_target) {
@@ -384,16 +388,21 @@ if ($keyed_target) {
     ok($mode4_rec == $mode5_rec);
     $tests_done{'DbGet mode 5'} = 1;
   } else {
-    skip(1,'DbFind');
-    skip(1,'DbGet mode 5');
+    skip('Skipped: Find target not available','DbFind');
+    skip('Skipped: Find target not available','DbGet mode 5');
   }
 } else {
-  skip(1,'DbInfo mode 302');
-  skip(1,'DbGet mode 7');
-  skip(1,'$rec3{$key_item} eq $rec2{$key_item}');
-  skip(1,'DbFind');
-  skip(1,'DbGet mode 5');
+  skip('Skipped: Keyed target not available','DbInfo mode 302');
+  skip('Skipped: Keyed target not available','DbGet mode 7');
+  skip('Skipped: Keyed target not available','$rec3{$key_item} eq $rec2{$key_item}');
+  skip('Skipped: Keyed target not available','DbGet mode 7 with undef list');
+  skip('Skipped: Keyed target not available','$rec3{$key_item} eq $rec2{$key_item}');
+  skip('Skipped: Keyed target not available','DbGet mode 7 with no list');
+  skip('Skipped: Keyed target not available','$rec3{$key_item} eq $rec2{$key_item}');
+  skip('Skipped: Keyed target not available','DbFind');
+  skip('Skipped: Keyed target not available','DbGet mode 5');
 }
+print "# Another nine completed (making 18 total)\n";
 
 # DbMemo test
 DbMemo($db,'MPE::IMAGE Testing DbMemo');
@@ -409,29 +418,179 @@ DbBegin($db,1,'MPE::IMAGE Testing DbBegin mode 1');
 DbExplain unless ($DbStatus[0] == 0);
 ok($DbStatus[0] == 0);
 $tests_done{'DbBegin mode 1'} = 1;
+print "# Two more (that's 20 now)\n";
+
+if ($test_write) {
+  if ($update_only) {
+    my %update_rec = DbGet($db,2,$write_target);
+    DbExplain unless $DbStatus[0] == 0 or $DbStatus[0] == 11;
+
+    if ($DbStatus[0] == 0) {
+      if ($open_mode == 1) {
+        print STDERR "Locking $write_target . . .\n";
+        DbLock($db,3,$write_target);
+        DbExplain unless ($DbStatus[0] == 0);
+        ok($DbStatus[0] == 0);
+        $tests_done{'DbLock mode 3'} = 1;
+        print STDERR "Locked.\n";
+      } else {
+        skip('Skipped: database not open mode 1','DbLock');
+      }
+
+      DbUpdate($db,$write_target,'0;',''); # So as to not disturb any data
+      DbExplain unless ($DbStatus[0] == 0);
+      ok($DbStatus[0] == 0);
+      $tests_done{'DbUpdate'} = 1;
+
+      if ($open_mode == 1) {
+        DbUnlock($db);
+        DbExplain unless ($DbStatus[0] == 0);
+        ok($DbStatus[0] == 0);
+        $tests_done{'DbUnlock'} = 1;
+      } else {
+        skip('Skipped: database not open mode 1','DbUnlock');
+      }
+
+    } else {
+      skip('Skipped: Could not get record to update','DbLock');
+      skip('Skipped: Could not get record to update','DbUpdate');
+      skip('Skipped: Could not get record to update','DbUnlock');
+    }
+    skip('Skipped: Only update-capable','DbPut');
+    skip('Skipped: Only update-capable','DbDelete');
+  } else { # test DbPut, DbUpdate and DbDelete
+
+    my %setinfo = DbInfo($db,205,$write_target);
+
+    # First find critical items:
+    my $key_item = undef;
+    if ($setinfo{'type'} eq 'M') {
+      $key_item = (DbInfo($db,302,$write_target))[0];
+    }
+
+    # Now look for items which can be changed 
+    my @set_items = map { abs($_) } DbInfo($db,104,$write_target);
+    my @non_critical;
+    if (defined($key_item)) {
+      @non_critical = grep { $_ != $key_item } @set_items;
+    } else { 
+      @non_critical = @set_items;
+    } 
+    my @changeable = grep { DbInfo($db,101,$_) < 0 } @non_critical;
+  
+    my $update_item;
+    if (defined($key_item) or @changeable) {
+      if (@changeable) {
+        $update_item = item_name($db,$changeable[rand(@changeable)]);
+      }
+
+      my %data;
+      my $cnt = 0;
+      if (defined($key_item)) {
+        DbGet($db,7,$write_target,++$cnt);
+        DbExplain unless $DbStatus[0] == 0 or $DbStatus[0] == 17;
+        while ($DbStatus[0] == 0) {
+          DbGet($db,7,$write_target,++$cnt);
+          DbExplain unless $DbStatus[0] == 0 or $DbStatus[0] == 17;
+        }
+        $data{item_name($db,$key_item)} = $cnt;
+      }
+      if (defined($update_item) and !exists($data{$update_item})) {
+        $data{$update_item} = ++$cnt;
+      }
+
+      print STDERR "\n\nDbPutting the following record to $write_target:\n";
+      foreach (sort keys %data) {
+        print STDERR "$_: $data{$_}\n";
+      }
+      print STDERR "\n";
+
+      if ($open_mode == 1) {
+        print STDERR "Trying to lock $write_target . . .\n\n";
+        DbLock($db,3,$write_target);
+        DbExplain unless $DbStatus[0] == 0;
+        ok($DbStatus[0] == 0);
+        $tests_done{'DbLock mode 3'} = 1;
+        print STDERR "\n\nLocked.\n\n" if $DbStatus[0] == 0;;
+      } else {
+        skip('Skipped: database not open mode 1','DbLock');
+      }
+
+      DbPut($db,$write_target,\%data);
+      DbExplain unless ($DbStatus[0] == 0);
+      ok($DbStatus[0] == 0);
+      $tests_done{'DbPut'} = 1;
+
+      print STDERR "\n\nRecord created\n\n" if $DbStatus[0] == 0;
+
+      $update_item = '0' unless defined($update_item);
+      DbUpdate($db,$write_target,{ $update_item => 0 }); # Change the value
+      DbExplain unless ($DbStatus[0] == 0);
+      ok($DbStatus[0] == 0);
+      $tests_done{'DbUpdate'} = 1;
+
+      print STDERR "\n\nRecord updated\n\n" if $DbStatus[0] == 0;
+
+      DbDelete($db,$write_target);
+      DbExplain unless ($DbStatus[0] == 0);
+      ok($DbStatus[0] == 0);
+      $tests_done{'DbDelete'} = 1;
+
+      print STDERR "\n\nRecord deleted.\n\n" if $DbStatus[0] == 0;
+
+      if ($open_mode == 1) {
+        DbUnlock($db);
+        DbExplain unless ($DbStatus[0] == 0);
+        ok($DbStatus[0] == 0);
+        $tests_done{'DbUnlock'} = 1;
+      } else {
+        skip('Skipped: database not open mode 1','DbUnlock');
+      }
+
+    } else {
+      print STDERR "Error: Could not find any critical or changeable items\n";
+      ok(0) for (1..5);
+    }
+  }
+} else {
+  skip('Skipped: not testing write capabilities','DbLock');
+  skip('Skipped: not testing write capabilities','DbPut');
+  skip('Skipped: not testing write capabilities','DbUpdate');
+  skip('Skipped: not testing write capabilities','DbDelete');
+  skip('Skipped: not testing write capabilities','DbUnlock');
+}
+print "# Five more completed, giving 25 total.\n";
 
 DbEnd($db,2,'MPE::IMAGE Testing DbEnd mode 2');
 DbExplain unless ($DbStatus[0] == 0);
 ok($DbStatus[0] == 0);
 $tests_done{'DbEnd mode 2'} = 1;
+print "# There's another.  We're up to 26.\n";
  
-DbXBegin($db,1,'MPE::IMAGE Testing DbXBegin mode 1');
-DbExplain unless ($DbStatus[0] == 0);
-ok($DbStatus[0] == 0);
-$tests_done{'DbXBegin mode 1'} = 1;
-
-DbXEnd($db,1,'MPE::IMAGE Testing DbXEnd mode 1');
-DbExplain unless ($DbStatus[0] == 0);
-ok($DbStatus[0] == 0);
-$tests_done{'DbXEnd mode 1'} = 1;
- 
-DbXBegin($db,1,'MPE::IMAGE Testing DbXBegin mode 1');
-DbExplain unless ($DbStatus[0] == 0);
-
-DbXUndo($db,1,'MPE::IMAGE Testing DbXUndo mode 1');
-DbExplain unless ($DbStatus[0] == 0);
-ok($DbStatus[0] == 0);
-$tests_done{'DbXUndo mode 1'} = 1;
+unless ($open_mode == 2) {
+  DbXBegin($db,1,'MPE::IMAGE Testing DbXBegin mode 1');
+  DbExplain unless ($DbStatus[0] == 0);
+  ok($DbStatus[0] == 0);
+  $tests_done{'DbXBegin mode 1'} = 1;
+  
+  DbXEnd($db,1,'MPE::IMAGE Testing DbXEnd mode 1');
+  DbExplain unless ($DbStatus[0] == 0);
+  ok($DbStatus[0] == 0);
+  $tests_done{'DbXEnd mode 1'} = 1;
+   
+  DbXBegin($db,1,'MPE::IMAGE Testing DbXBegin mode 1');
+  DbExplain unless ($DbStatus[0] == 0);
+  
+  DbXUndo($db,1,'MPE::IMAGE Testing DbXUndo mode 1');
+  DbExplain unless ($DbStatus[0] == 0);
+  ok($DbStatus[0] == 0);
+  $tests_done{'DbXUndo mode 1'} = 1;
+} else {
+  skip('Skipped: Db opened mode 2','DbXBegin mode 1');
+  skip('Skipped: Db opened mode 2','DbXEnd mode 1');
+  skip('Skipped: Db opened mode 2','DbXUndo mode 1');
+}
+print "# Three more makes 29.\n";
 
 # Attempt to open the database again to test multiple-db form
 my($db2,$multi_db);
@@ -463,45 +622,55 @@ if ($multi_db) {
   ok($DbStatus[0] == 0);
   $tests_done{'DbEnd mode 4'} = 1;
 
-  DbControl($db,7);
-  DbExplain unless ($DbStatus[0] == 0);
-  ok($DbStatus[0] == 0);
-  $tests_done{'DbControl mode 7'} = 1;
-
-  DbControl($db2,7);
-  DbExplain unless ($DbStatus[0] == 0);
-
-  $transid = DbXBegin([$db,$db2],3,'MPE::IMAGE Testing DbXBegin mode 3');
-  DbExplain unless ($DbStatus[0] == 0);
-  ok($DbStatus[0] == 0);
-  $tests_done{'DbXBegin mode 3'} = 1;
-
-  DbXEnd($transid,3,'MPE::IMAGE Testing DbXEnd mode 3');
-  DbExplain unless ($DbStatus[0] == 0);
-  ok($DbStatus[0] == 0);
-  $tests_done{'DbXEnd mode 3'} = 1;
-
-  $transid = DbXBegin([$db,$db2],3,'MPE::IMAGE Testing DbXBegin mode 3');
-  DbExplain unless ($DbStatus[0] == 0);
-
-  DbXUndo($transid,3,'MPE::IMAGE Testing DbXUndo mode 3');
-  DbExplain unless ($DbStatus[0] == 0);
-  ok($DbStatus[0] == 0);
-  $tests_done{'DbXUndo mode 3'} = 1;
+  unless ($open_mode == 2) {
+    DbControl($db,7);
+    DbExplain unless ($DbStatus[0] == 0);
+    ok($DbStatus[0] == 0);
+    $tests_done{'DbControl mode 7'} = 1;
+  
+    DbControl($db2,7);
+    DbExplain unless ($DbStatus[0] == 0);
+  
+    $transid = DbXBegin([$db,$db2],3,'MPE::IMAGE Testing DbXBegin mode 3');
+    DbExplain unless ($DbStatus[0] == 0);
+    ok($DbStatus[0] == 0);
+    $tests_done{'DbXBegin mode 3'} = 1;
+  
+    DbXEnd($transid,3,'MPE::IMAGE Testing DbXEnd mode 3');
+    DbExplain unless ($DbStatus[0] == 0);
+    ok($DbStatus[0] == 0);
+    $tests_done{'DbXEnd mode 3'} = 1;
+  
+    $transid = DbXBegin([$db,$db2],3,'MPE::IMAGE Testing DbXBegin mode 3');
+    DbExplain unless ($DbStatus[0] == 0);
+  
+    DbXUndo($transid,3,'MPE::IMAGE Testing DbXUndo mode 3');
+    DbExplain unless ($DbStatus[0] == 0);
+    ok($DbStatus[0] == 0);
+    $tests_done{'DbXUndo mode 3'} = 1;
+  } else {
+    skip('Skipped: Db opened mode 2','DbControl mode 7');
+    skip('Skipped: Db opened mode 2','DbXBegin mode 3');
+    skip('Skipped: Db opened mode 2','DbXEnd mode 3');
+    skip('Skipped: Db opened mode 2','DbXUndo mode 3');
+  }
 } else {
-  skip(1,'DbBegin mode 3');
-  skip(1,'DbEnd mode 3');
-  skip(1,'DbBegin mode 4');
-  skip(1,'DbEnd mode 4');
-  skip(1,'DbControl mode 7');
-  skip(1,'DbXBegin mode 3');
-  skip(1,'DbXUndo mode 3');
+  skip('Skipped: Could not open db a second time','DbBegin mode 3');
+  skip('Skipped: Could not open db a second time','DbEnd mode 3');
+  skip('Skipped: Could not open db a second time','DbBegin mode 4');
+  skip('Skipped: Could not open db a second time','DbEnd mode 4');
+  skip('Skipped: Could not open db a second time','DbControl mode 7');
+  skip('Skipped: Could not open db a second time','DbXBegin mode 3');
+  skip('Skipped: Could not open db a second time','DbXEnd mode 3');
+  skip('Skipped: Could not open db a second time','DbXUndo mode 3');
 }
+print "# And another eight gives 37.\n";
 
 # Close the base
 DbClose($db,1);
 DbExplain unless ($DbStatus[0] == 0);
 ok($DbStatus[0] == 0);
 $tests_done{'DbClose'} = 1;
+print "# That's the last.  I count 38 in all.\n";
 
 print STDERR "\n\nTests performed:\n",join("\n",sort keys %tests_done),"\n\n";
