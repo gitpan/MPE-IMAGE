@@ -1,5 +1,9 @@
 Revision history for Perl extension MPE::IMAGE.
 
+0.98  21 Dec 2001
+        - Bug fix in DbLock
+        - Allow dataset to be given before mode in DbGet
+
 0.97  19 Oct 2001
         - Added DbLock, DbUnlock, DbPut, DbUpdate and DbDelete
         - Removed slow memory leak (thanks to Ken Hirsch for spotting it)

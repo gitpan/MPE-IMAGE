@@ -50,7 +50,7 @@ our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
 
 our @EXPORT = qw();
 
-our $VERSION = '0.97';
+our $VERSION = '0.98';
 bootstrap MPE::IMAGE $VERSION;
 
 use Config;
@@ -213,6 +213,10 @@ sub pack_item {
 
   my($count,$type,$len) = @{$pic_array};
 
+  carp("Item uninitialized") unless defined($item);
+  carp("Count uninitialized") unless defined($count);
+  carp("Type uninitialized") unless defined($type);
+  carp("Len uninitialized") unless defined($len);
   if ($count eq '' or $count == 1) {
     return pack_subitem($item,$type,$len);
   } else {
@@ -488,6 +492,10 @@ sub DbGet ($$$;$$$) {
   my(@list) = ();
   my $dset_num;
 
+  unless ($mode =~ /^\d/) { # Assume that they put the dataset first
+    ($mode,$dataset) = ($dataset,$mode);
+  }
+
   ($dataset, $dset_num) = touchup_dset($db,$dataset);
 
   if ($mode == 4 or $mode == 7 or $mode == 8) {
@@ -590,8 +598,9 @@ sub DbLock ($$;@) {
         $value = pack_item($value, [ @{$info}{'count', 'type', 'length'} ]);
         my $len = $info->{'count'} * $size_factor{$info->{'type'}} *  
                   $info->{'length'};
-        $descr .= pack('S A16 A16 A2',int($len/2)+18,dset_name($db,$vals[0]),
-                                      $item_name,$relop).$value;
+        $descr .= pack('S A16 A16 A2',int($len/2)+18,
+                       uc(dset_name($db,$vals[0])).';',
+                       $item_name,$relop).$value;
       }
     }
     _dblock($db,$mode,$descr);
@@ -623,16 +632,34 @@ sub DbOpen ($$$) {
   return bless $db, "MPE::IMAGE";
 }
 
-sub DbPut ($$$;$) {
-  my($db,$dset,$list,$data) = @_;
+sub DbPut ($$@) {
+  my($db,$dset) = splice(@_,0,2);
   my(@list) = ();;
   my $dset_num;
   my $schema = undef;
+
+  my($list,$data);
+  if (@_ == 1) {
+    $list = undef;
+    $data = $_[0];
+  } elsif (@_ == 2) {
+    if ($_[0] =~ /[,; ]/ or
+        ref($_[1])) { # This is a list, the rest is data
+      ($list,$data) = @_;
+    } else {
+      $list = undef;
+      $data = { @_ }
+    }
+  } elsif (@_ % 2 == 0) {
+    $list = undef;
+    $data = { @_ };
+  } else {
+    $list = shift @_;
+    $data = { @_ };
+  }
  
   ($dset,$dset_num) = touchup_dset($db,$dset);
   
-  ($data,$list) = ($list,$data) unless defined($data);
-
   if (UNIVERSAL::isa($data,'HASH')) {
     $list = join(',',keys %{$data});
     ($list,@list) = touchup_list($db,$list,$dset_num,$dset);
@@ -678,16 +705,34 @@ sub DbPut ($$$;$) {
   }
 }
 
-sub DbUpdate ($$$;$) {
-  my($db,$dset,$list,$data) = @_;
-  my(@list) = ();;
+sub DbUpdate ($$@) {
+  my($db,$dset) = splice(@_,0,2);
+  my(@list) = ();
   my $dset_num;
   my $schema = undef;
  
+  my($list,$data);
+  if (@_ == 1) {
+    $list = undef;
+    $data = $_[0];
+  } elsif (@_ == 2) {
+    if ($_[0] =~ /[,; ]/ or
+        ref($_[1])) { # This is a list, the rest is data
+      ($list,$data) = @_;
+    } else {
+      $list = undef;
+      $data = { @_ }
+    }
+  } elsif (@_ % 2 == 0) {
+    $list = undef;
+    $data = { @_ };
+  } else {
+    $list = shift @_;
+    $data = { @_ };
+  }
+ 
   ($dset,$dset_num) = touchup_dset($db,$dset);
   
-  ($data,$list) = ($list,$data) unless defined($data);
-
   if (UNIVERSAL::isa($data,'HASH')) {
     $list = join(',',keys %{$data});
     ($list,@list) = touchup_list($db,$list,$dset_num,$dset);

@@ -3,7 +3,7 @@
 use Test;
 use strict;
 
-BEGIN { plan tests => 38 }
+BEGIN { plan tests => 39 }
 
 use MPE::IMAGE ':all';
 
@@ -452,10 +452,11 @@ if ($test_write) {
       }
 
     } else {
-      skip('Skipped: Could not get record to update','DbLock');
+      skip('Skipped: Could not get record to update','DbLock mode 3');
       skip('Skipped: Could not get record to update','DbUpdate');
       skip('Skipped: Could not get record to update','DbUnlock');
     }
+    skip('Skipped: Only update-capable','DbLock mode 5');
     skip('Skipped: Only update-capable','DbPut');
     skip('Skipped: Only update-capable','DbDelete');
   } else { # test DbPut, DbUpdate and DbDelete
@@ -478,6 +479,8 @@ if ($test_write) {
     } 
     my @changeable = grep { DbInfo($db,101,$_) < 0 } @non_critical;
   
+    $key_item = item_name($db,$key_item) if defined($key_item);
+
     my $update_item;
     if (defined($key_item) or @changeable) {
       if (@changeable) {
@@ -493,7 +496,7 @@ if ($test_write) {
           DbGet($db,7,$write_target,++$cnt);
           DbExplain unless $DbStatus[0] == 0 or $DbStatus[0] == 17;
         }
-        $data{item_name($db,$key_item)} = $cnt;
+        $data{$key_item} = $cnt;
       }
       if (defined($update_item) and !exists($data{$update_item})) {
         $data{$update_item} = ++$cnt;
@@ -507,6 +510,7 @@ if ($test_write) {
 
       if ($open_mode == 1) {
         print STDERR "Trying to lock $write_target . . .\n\n";
+
         DbLock($db,3,$write_target);
         DbExplain unless $DbStatus[0] == 0;
         ok($DbStatus[0] == 0);
@@ -516,12 +520,24 @@ if ($test_write) {
         skip('Skipped: database not open mode 1','DbLock');
       }
 
-      DbPut($db,$write_target,\%data);
+      DbPut($db,$write_target,%data);
       DbExplain unless ($DbStatus[0] == 0);
       ok($DbStatus[0] == 0);
       $tests_done{'DbPut'} = 1;
 
       print STDERR "\n\nRecord created\n\n" if $DbStatus[0] == 0;
+
+      if (defined($key_item)) {
+        DbUnlock($db);
+        DbExplain unless $DbStatus[0] == 0;
+       
+        DbLock($db,5, [ $write_target, "$key_item=$data{$key_item}" ]);
+        DbExplain unless $DbStatus[0] == 0;
+        ok($DbStatus[0] == 0);
+        $tests_done{'DbLock mode 5'} = 1;
+      } else {
+        skip('Skipped: No key item available for lock','DbLock mode 5');
+      }
 
       $update_item = '0' unless defined($update_item);
       DbUpdate($db,$write_target,{ $update_item => 0 }); # Change the value
@@ -530,6 +546,14 @@ if ($test_write) {
       $tests_done{'DbUpdate'} = 1;
 
       print STDERR "\n\nRecord updated\n\n" if $DbStatus[0] == 0;
+
+      if (defined($key_item)) {
+        DbUnlock($db);
+        DbExplain unless $DbStatus[0] == 0;
+       
+        DbLock($db,3,$write_target);
+        DbExplain unless $DbStatus[0] == 0;
+      }
 
       DbDelete($db,$write_target);
       DbExplain unless ($DbStatus[0] == 0);
@@ -549,11 +573,12 @@ if ($test_write) {
 
     } else {
       print STDERR "Error: Could not find any critical or changeable items\n";
-      ok(0) for (1..5);
+      ok(0) for (1..6);
     }
   }
 } else {
-  skip('Skipped: not testing write capabilities','DbLock');
+  skip('Skipped: not testing write capabilities','DbLock mode 3');
+  skip('Skipped: not testing write capabilities','DbLock mode 5');
   skip('Skipped: not testing write capabilities','DbPut');
   skip('Skipped: not testing write capabilities','DbUpdate');
   skip('Skipped: not testing write capabilities','DbDelete');
