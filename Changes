@@ -1,5 +1,11 @@
 Revision history for Perl extension MPE::IMAGE.
 
+0.05  02 Sep 2001
+        - Fixed up handling of default list when it is omitted.
+        - Allow 4-argument form of DbGet mode 4, 7 or 8 (list omitted)
+        - Some touch-up to DbFind for TPI
+        - use Carp;
+
 0.04  09 Jul 2001
         - DbClose now assumes mode 1 if the mode is not specified
         - Some documentation fixes

@@ -3,6 +3,7 @@ package MPE::IMAGE;
 require 5.005_62;
 use strict;
 use warnings;
+use Carp;
 
 require Exporter;
 require DynaLoader;
@@ -44,7 +45,7 @@ our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
 
 our @EXPORT = qw();
 
-our $VERSION = '0.04';
+our $VERSION = '0.05';
 bootstrap MPE::IMAGE $VERSION;
 
 use Config;
@@ -138,6 +139,7 @@ sub item_num ($$) {
     return $db->{item_nums}->{$item};
   } else {
     my $num = DbInfo($db,101,$item);
+    return unless $DbStatus[0] == 0;
     $db->{item_names}->[abs($num)] = $item;
     return $db->{item_nums}->{$item} = $num;
   }
@@ -178,7 +180,7 @@ sub item_info ($$) {
   $item = abs($item);
   unless (defined($db->{item_info}->[$item])) {
     my %info = DbInfo($db,102,$item);
-    return undef unless $DbStatus[0] == 0;
+    return unless $DbStatus[0] == 0;
     $db->{item_info}->[$item] = \%info;
   }
   return $db->{item_info}->[$item];
@@ -188,7 +190,7 @@ sub mult {
   # Multiply an arbitrarily long integer by a 32-bit or smaller integer,
   # returning the (arbitrarily long) product
   my($num,$factor,$add) = @_;
-  return undef if ($factor > 238609294);  # That's just under (2**31)/9
+  return if ($factor > 238609294);  # That's just under (2**31)/9
   my $carry = (defined($add)) ? $add : 0;
 
   foreach my $idx (reverse(0..length($num)-1)) {
@@ -237,7 +239,7 @@ sub pack_subitem {
       my $value = pack('L L', int($item / 2**32), $item % 2**32);
       return substr($value,-$length*2);
     } 
-    die "MPE::IMAGE does not cannot pack I, J or K items above 8 bytes long";
+    croak "MPE::IMAGE cannot pack I, J or K items above 8 bytes long";
   } else {  # E and R
     my $ret_val = pack(($length == 2) ? 'f' : 'd',$item);
     if ($type eq 'R') {
@@ -294,8 +296,8 @@ sub unpack_subitem {
   }
 }
 
-sub DbFind ($$$;$$) {
-  my($db,$dataset,$mode,$item,$argument) = @_;
+sub DbFind ($$$;$$$) {
+  my($db,$dataset,$mode,$item,$argument,$type) = @_;
   my($dset_num,$item_num);
 
   if ($dataset =~ /^-?\d+$/) {
@@ -322,11 +324,19 @@ sub DbFind ($$$;$$) {
   } else {
     $item = uc($item);
     $item .= ';' unless $item =~ /[ ;]$/;
-    $item_num = abs(item_num($db,$item));
+    $item_num = item_num($db,$item);
+    $item_num = abs($item_num) if defined($item_num);
   }
 
-  my $info = item_info($db,$item_num);
-  $argument = pack_item($argument, [ @{$info}{'count', 'type', 'length'} ]);
+  return unless defined($item_num) or defined($type);
+  if (defined($type)) {
+    my($c,$t,$l) = ($type =~ /(\d*)([EIJKPRUXZ])(\d+)/i) or return;
+    $c = '' unless defined($c);
+    $argument = pack_item($argument, [ $c,$t,$l ]);
+  } else {
+    my $info = item_info($db,$item_num);
+    $argument = pack_item($argument, [ @{$info}{'count', 'type', 'length'} ]);
+  }
   _dbfind($db,$dataset,$mode,$item,$argument);
 }
 
@@ -341,6 +351,12 @@ sub DbGet ($$$;$$$) {
     $dataset = uc($dataset);
     $dataset .= ';' unless $dataset =~ /[ ;]$/;
     $dset_num = abs(dset_num($db,$dataset));
+  }
+  if ($mode == 4 or $mode == 7 or $mode == 8) {
+    if (@_ == 4) {
+      $argument = $list;
+      undef $list;
+    } 
   }
   unless (defined($list)) {
     if (defined($db->{default_lists}->[$dset_num])) {
@@ -418,7 +434,7 @@ sub DbGet ($$$;$$$) {
     while (@{$schema}) {
       push @name,shift @{$schema};
       my $pic = shift @{$schema};
-      die "Invalid datatype in DbGet: $pic"
+      croak "Invalid datatype in DbGet: $pic"
         unless $pic =~ /^(\d*)([A-Za-z])(\d+)$/;
       my $count = (length($1)) ? $1 : '1';
       my $type = uc($2);
@@ -441,7 +457,7 @@ sub DbGet ($$$;$$$) {
   }
   $list = \@list unless $list =~ /^[0*@][ ;]$/;
 
-  $db->{default_lists}->[$dset_num] = $list;
+  $db->{default_lists}->[$dset_num] = \@list;
   $db->{default_names}->[$dset_num] = \@name;
   $db->{default_types}->[$dset_num] = \@type;
   $db->{default_sizes}->[$dset_num] = \@size;
@@ -666,15 +682,25 @@ If mode is omitted, it defaults to 1.
   DbFind(Database,dataset,argument);  # Assumed find mode 1 on key item
   DbFind(Database,dataset,item,argument);  # Assumed mode 1
   DbFind(Database,dataset,mode,item,argument);
+  DbFind(Database,dataset,argument,type);  # Assumed find mode 1 on key item
+  DbFind(Database,dataset,item,argument,type);  # Assumed mode 1
+  DbFind(Database,dataset,mode,item,argument,type);
+
+C<type> is a string containing an IMAGE type (such as "2X10") and is 
+necessary only when searching on a TPI index (for which MPE::IMAGE cannot
+look up the type).
 
 =head2 C<DbGet>
 
   DbGet(Database,mode,dataset);
   DbGet(Database,mode,dataset,list);
-  DbGet(Database,mode,dataset,undef,argument);
-  DbGet(Database,mode,dataset,list,argument);
   DbGet(Database,mode,dataset,undef,undef,schema);
   DbGet(Database,mode,dataset,list,undef,schema);
+
+If mode is 4, 7 or 8:
+
+  DbGet(Database,mode,dataset,argument);
+  DbGet(Database,mode,dataset,list,argument);
   DbGet(Database,mode,dataset,undef,argument,schema);
   DbGet(Database,mode,dataset,list,argument,schema);
 

@@ -125,15 +125,25 @@ DESCRIPTION
       DbFind(Database,dataset,argument);  # Assumed find mode 1 on key item
       DbFind(Database,dataset,item,argument);  # Assumed mode 1
       DbFind(Database,dataset,mode,item,argument);
+      DbFind(Database,dataset,argument,type);  # Assumed find mode 1 on key item
+      DbFind(Database,dataset,item,argument,type);  # Assumed mode 1
+      DbFind(Database,dataset,mode,item,argument,type);
+
+    `type' is a string containing an IMAGE type (such as "2X10") and is
+    necessary only when searching on a TPI index (for which MPE::IMAGE
+    cannot look up the type).
 
   `DbGet'
 
       DbGet(Database,mode,dataset);
       DbGet(Database,mode,dataset,list);
-      DbGet(Database,mode,dataset,undef,argument);
-      DbGet(Database,mode,dataset,list,argument);
       DbGet(Database,mode,dataset,undef,undef,schema);
       DbGet(Database,mode,dataset,list,undef,schema);
+
+    If mode is 4, 7 or 8:
+
+      DbGet(Database,mode,dataset,argument);
+      DbGet(Database,mode,dataset,list,argument);
       DbGet(Database,mode,dataset,undef,argument,schema);
       DbGet(Database,mode,dataset,list,argument,schema);
 

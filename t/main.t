@@ -3,7 +3,7 @@
 use Test;
 use strict;
 
-BEGIN { plan tests => 29 }
+BEGIN { plan tests => 33 }
 
 use MPE::IMAGE ':all';
 
@@ -356,6 +356,16 @@ if ($keyed_target) {
   DbExplain unless $DbStatus[0] == 0;
   ok($DbStatus[0] == 0);
   $tests_done{'DbGet mode 7'} = 1;
+  ok($rec3{$key_item} eq $rec2{$key_item});
+  %rec3 = DbGet($db,7,$keyed_target,undef,$rec2{$key_item});
+  DbExplain unless $DbStatus[0] == 0;
+  ok($DbStatus[0] == 0);
+  $tests_done{'DbGet mode 7 with undef list'} = 1;
+  ok($rec3{$key_item} eq $rec2{$key_item});
+  %rec3 = DbGet($db,7,$keyed_target,$rec2{$key_item});
+  DbExplain unless $DbStatus[0] == 0;
+  ok($DbStatus[0] == 0);
+  $tests_done{'DbGet mode 7 with no list'} = 1;
   ok($rec3{$key_item} eq $rec2{$key_item});
 
   if ($find_target) {
